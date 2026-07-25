@@ -7,14 +7,12 @@ from docx import Document
 import re
 from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
 
 # ==========================================
 # 1. ページ初期設定
 # ==========================================
 st.set_page_config(
-    page_title="ツナグ先生 - 校務支援・成績＆所見統合システム (V7.0)",
+    page_title="ツナグ先生 - 校務支援・成績＆所見統合システム (V7.1)",
     page_icon="📝",
     layout="wide"
 )
@@ -38,7 +36,7 @@ if "carte_result" not in st.session_state:
 if "score_data" not in st.session_state:
     st.session_state.score_data = pd.DataFrame([
         {"出席番号": 1, "氏名": "相沢 拓海", "単元1_知識": "85", "単元2_知識": "90", "単元1_思考": "78", "単元2_思考": "82", "主体性": "A", "総合所見": "数学の方程式において自力で立式し、粘り強く解き進める姿勢が見られました。", "備考": ""},
-        {"出席番号": 2, "氏名": "伊藤 葵", "単元1_知識": "欠", "単元2_知識": "88", "単元1_思考": "欠", "単元2_思考": "85", "主体性": "A", "総合所見": "グループワークで積極的に意見をまとめ、周囲を明るくリードしていました。", "備考": "単元1病欠"},
+        {"出席番号": 2, "氏名": "伊藤 葵", "単元1_知識": "欠", "単元2_知識": "88", "単元1_思考": "欠", "単元2_思考": "85", "主体性": "A", "総合所見": "グループワークで積極的に意見をまとめ、周囲を明るくリードしていました。", "備考": "単元1病欠（見込み処理）"},
         {"出席番号": 3, "氏名": "上野 翔太", "単元1_知識": "62", "単元2_知識": "58", "単元1_思考": "55", "単元2_思考": "欠", "主体性": "B", "総合所見": "計算の見直しを丁寧に行うようになり、着実に着眼点が向上しています。", "備考": "単元2公欠"},
         {"出席番号": 4, "氏名": "遠藤 桜", "単元1_知識": "45", "単元2_知識": "50", "単元1_思考": "40", "単元2_思考": "42", "主体性": "C", "総合所見": "基礎的な問題に繰り返し取り組み、最後まで諦めずに努力を重ねました。", "備考": "要支援"},
     ])
@@ -85,7 +83,6 @@ def generate_simple_pdf(student_name, doc_type_name, finding_text):
     buffer = io.BytesIO()
     p = canvas.Canvas(buffer, pagesize=A4)
     
-    # 描画処理
     p.setFont("Helvetica-Bold", 16)
     p.drawString(50, 800, f"[{doc_type_name}] {student_name}")
     p.setLineWidth(1)
@@ -94,7 +91,6 @@ def generate_simple_pdf(student_name, doc_type_name, finding_text):
     p.setFont("Helvetica", 10)
     p.drawString(50, 760, "Shoken / General Comments:")
     
-    # テキストを折り返して描画（簡易）
     y = 730
     lines = [finding_text[i:i+40] for i in range(0, len(finding_text), 40)]
     for line in lines:
@@ -157,7 +153,7 @@ with st.sidebar:
 # ==========================================
 # 7. メイン画面（7タブ構成）
 # ==========================================
-st.title("📝 ツナグ先生 - 校務総合支援システム (V7.0)")
+st.title("📝 ツナグ先生 - 校務総合支援システム (V7.1)")
 st.caption(f"現在のモード: **{doc_type}**")
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
@@ -171,7 +167,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
 ])
 
 # ------------------------------------------
-# タブ1〜5: (既存の機能)
+# タブ1: 個人作成 ＆ AI微調整
 # ------------------------------------------
 with tab1:
     col1, col2 = st.columns([1, 1])
@@ -206,6 +202,9 @@ with tab1:
             st.session_state.generated_findings = edited_text
             st.caption(f"文字数: {len(edited_text)}文字")
 
+# ------------------------------------------
+# タブ2: CSV一括作成
+# ------------------------------------------
 with tab2:
     st.subheader("CSVファイルからクラス全員分を一括生成")
     uploaded_file = st.file_uploader("CSVアップロード (名前, エピソード)", type=["csv"])
@@ -226,6 +225,9 @@ with tab2:
                 csv.writer(output).writerows(results)
                 st.download_button("📥 結果CSVダウンロード", data=output.getvalue().encode("utf-8-sig"), file_name="所見一括結果.csv")
 
+# ------------------------------------------
+# タブ3: 所見自動校正
+# ------------------------------------------
 with tab3:
     st.subheader("🔍 所見文章の自動校正")
     input_text_to_check = st.text_area("チェックする文章:", value=st.session_state.generated_findings, height=150)
@@ -236,6 +238,9 @@ with tab3:
             res = model.generate_content(prompt)
             st.markdown(res.text)
 
+# ------------------------------------------
+# タブ4: 面談用カルテ
+# ------------------------------------------
 with tab4:
     st.subheader("💬 面談用カルテ作成")
     c_name = st.text_input("生徒名", key="t4_cname")
@@ -248,13 +253,116 @@ with tab4:
             res = model.generate_content(prompt)
             st.markdown(res.text)
 
+# ------------------------------------------
+# タブ5: 成績蓄積 & 部会支援 (完全復活!)
+# ------------------------------------------
 with tab5:
-    st.subheader("📊 成績蓄積 & 部会支援")
-    edited_df = st.data_editor(st.session_state.score_data, num_rows="dynamic", use_container_width=True)
+    st.subheader("📊 成績蓄積・観点別自動集計・教科部会（成績会議）支援")
+    st.caption("テスト点数（欠席時は「欠」と入力）から観点別評価・評定を算出し、部会での協議資料を作成します。")
+
+    # 成績計算ヘルパー関数
+    def calc_score_and_grade(row):
+        # 知識・技能の計算
+        k_scores = []
+        for col in ["単元1_知識", "単元2_知識"]:
+            val = str(row.get(col, "")).strip()
+            if val.isdigit():
+                k_scores.append(float(val))
+        
+        k_avg = sum(k_scores) / len(k_scores) if k_scores else 0
+        k_eval = "A" if k_avg >= 80 else ("B" if k_avg >= 60 else "C")
+        if len(k_scores) < 2:
+            k_eval += " (見込み)"
+
+        # 思考・判断・表現の計算
+        t_scores = []
+        for col in ["単元1_思考", "単元2_思考"]:
+            val = str(row.get(col, "")).strip()
+            if val.isdigit():
+                t_scores.append(float(val))
+                
+        t_avg = sum(t_scores) / len(t_scores) if t_scores else 0
+        t_eval = "A" if t_avg >= 80 else ("B" if t_avg >= 60 else "C")
+        if len(t_scores) < 2:
+            t_eval += " (見込み)"
+
+        # 主体性
+        j_eval = str(row.get("主体性", "B")).strip()
+
+        # 5段階評定の暫定算出
+        score_map = {"A": 3, "A (見込み)": 3, "B": 2, "B (見込み)": 2, "C": 1, "C (見込み)": 1}
+        total_pts = score_map.get(k_eval, 2) + score_map.get(t_eval, 2) + score_map.get(j_eval, 2)
+        
+        if total_pts >= 8:
+            rating = 5
+        elif total_pts >= 7:
+            rating = 4
+        elif total_pts >= 5:
+            rating = 3
+        elif total_pts >= 4:
+            rating = 2
+        else:
+            rating = 1
+
+        return pd.Series({
+            "知識・技能 (平均/評価)": f"{k_avg:.1f}点 ➔ {k_eval}",
+            "思考・判断 (平均/評価)": f"{t_avg:.1f}点 ➔ {t_eval}",
+            "主体性": j_eval,
+            "仮評定 (1~5)": rating,
+            "判定理由・部会検討メモ": "未受験あり（要確認）" if ("見込み" in k_eval or "見込み" in t_eval) else "順調"
+        })
+
+    st.markdown("### 1. 成績データの入力・編集（テスト結果 & 未受験『欠』の管理）")
+    edited_df = st.data_editor(
+        st.session_state.score_data,
+        num_rows="dynamic",
+        use_container_width=True,
+        key="score_editor"
+    )
     st.session_state.score_data = edited_df
 
+    st.markdown("---")
+    st.markdown("### 2. 🧮 観点別自動算定 & 数学科部会（成績会議）提示プロジェクター画面")
+    
+    calc_results = edited_df.apply(calc_score_and_grade, axis=1)
+    summary_df = pd.concat([edited_df[["出席番号", "氏名", "備考"]], calc_results], axis=1)
+
+    # ハイライト用スタイリング関数
+    def highlight_borderline(val):
+        color = ''
+        if '未受験' in str(val):
+            color = 'background-color: #fff3cd; color: #856404; font-weight: bold;'
+        return color
+
+    # データフレーム表示（Pandas互換性維持：mapを使用）
+    st.dataframe(
+        summary_df.style.map(highlight_borderline, subset=["判定理由・部会検討メモ"]),
+        use_container_width=True
+    )
+
+    st.markdown("---")
+    st.markdown("### 3. 📤 教科部会用資料・Excelエクスポート")
+    
+    try:
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            summary_df.to_excel(writer, index=False, sheet_name='数学科評定一覧')
+        excel_data = excel_buffer.getvalue()
+
+        col_ex1, col_ex2 = st.columns([1, 1])
+        with col_ex1:
+            st.download_button(
+                label="📊 部会用成績一覧表をExcel (.xlsx) でダウンロード",
+                data=excel_data,
+                file_name="数学科_観点別評価・評定集計表.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+    except Exception as e:
+        st.warning("Excel書き出し処理でエラーが発生しました。")
+
 # ------------------------------------------
-# タブ6: 🖨️ 様式出力 & テンプレート差し込み (新機能!)
+# タブ6: 🖨️ 様式出力 & テンプレート差し込み
 # ------------------------------------------
 with tab6:
     st.subheader("🖨️ 学校独自様式（Word/Excel/PDF）への差し込み & 個別・一括出力")
@@ -291,7 +399,6 @@ with tab6:
                 if template_file:
                     doc = Document(template_file)
                 else:
-                    # デモ用簡易Docx生成
                     doc = Document()
                     doc.add_heading(f"{target_doc} - {student_row['氏名']} 様", 0)
                     doc.add_paragraph(f"出席番号: {student_row['出席番号']}")
@@ -332,7 +439,7 @@ with tab6:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             else:
-                st.success("全員分のWord/PDFを準備しました。個別出力をご利用いただくか、Zip一括出力が可能です。")
+                st.success("全員分のWord/PDF生成が可能です。個別にダウンロードするかExcel出力をお試しください。")
 
 # ------------------------------------------
 # タブ7: 印刷 & 校務連携
