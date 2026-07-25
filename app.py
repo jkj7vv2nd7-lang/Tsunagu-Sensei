@@ -7,7 +7,7 @@ import io
 # 1. ページ初期設定
 # ==========================================
 st.set_page_config(
-    page_title="ツナグ先生 - 所見自動生成・編集システム (V4.0)",
+    page_title="ツナグ先生 - 校務支援・所見＆カルテ統合システム (V5.0)",
     page_icon="📝",
     layout="wide"
 )
@@ -18,11 +18,14 @@ st.set_page_config(
 if "school_rules" not in st.session_state:
     st.session_state.school_rules = "・具体的なエピソードに基づき、成長のプロセスを評価する。\n・ポジティブな変化や意欲を中心に記述する。\n・専門用語は避け、保護者に分かりやすい表現にする。"
 
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
-
 if "generated_findings" not in st.session_state:
     st.session_state.generated_findings = ""
+
+if "proofread_result" not in st.session_state:
+    st.session_state.proofread_result = ""
+
+if "carte_result" not in st.session_state:
+    st.session_state.carte_result = ""
 
 # ==========================================
 # 3. セキュリティ：ローカル完全匿名化ロジック
@@ -53,7 +56,6 @@ try:
     if "GEMINI_API_KEY" in st.secrets:
         api_key = st.secrets["GEMINI_API_KEY"]
 except Exception:
-    # ローカル環境等で secrets.toml が存在しない場合はエラーを出さずにパス
     pass
 
 # ==========================================
@@ -62,7 +64,6 @@ except Exception:
 with st.sidebar:
     st.header("⚙️ 全体設定")
     
-    # Secretsになければ画面から手入力
     if not api_key:
         api_key = st.text_input("Gemini API Key", type="password", help="APIキーを入力してください")
     else:
@@ -72,10 +73,10 @@ with st.sidebar:
         genai.configure(api_key=api_key)
 
     st.markdown("---")
-    st.subheader("📋 用途・文末ルールの選択")
+    st.subheader("📋 文書・文末ルールの選択")
     
     doc_type = st.radio(
-        "作成する文書の種類を選んでください:",
+        "基本文末モード:",
         ["通知表用（です・ます調）", "指導要録用（である・した調）", "観点記述型（〜ができる/〜に努める）"],
         index=0
     )
@@ -88,9 +89,9 @@ with st.sidebar:
         ending_instruction = "文末は「〜ができる。」「〜を理解している。」「〜に意欲的に取り組む。」などの【観点評価形式】で統一してください。"
 
     st.markdown("---")
-    st.subheader("🏫 校内固有のルール")
+    st.subheader("🏫 校内固有ルール & NG表現")
     st.session_state.school_rules = st.text_area(
-        "追加ルールがあれば記述:",
+        "遵守ルール・NG表現の追加:",
         value=st.session_state.school_rules,
         height=120
     )
@@ -98,27 +99,34 @@ with st.sidebar:
     st.success("🔒 個人情報保護フィルター: 有効")
 
 # ==========================================
-# 6. メイン画面
+# 6. メイン画面（タブ構成の更新）
 # ==========================================
-st.title("📝 ツナグ先生 - 所見自動生成システム")
+st.title("📝 ツナグ先生 - 校務総合支援システム (V5.0)")
 st.caption(f"現在のモード: **{doc_type}**")
 
-tab1, tab2, tab3 = st.tabs(["👤 個人作成 & AI微調整", "📁 CSVクラス一括作成", "🖨️ 印刷プレビュー・校務連携"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "👤 所見作成 & 微調整", 
+    "📁 CSVクラス一括生成", 
+    "🔍 所見自動校校正 & NGチェック", 
+    "💬 面談用カルテ作成", 
+    "🖨️ 印刷 & 校務連携"
+])
 
 # ------------------------------------------
-# タブ1: 個人作成 ＆ 高度化プロンプト
+# タブ1: 個人作成 ＆ AI微調整
 # ------------------------------------------
 with tab1:
     col1, col2 = st.columns([1, 1])
     
     with col1:
         st.subheader("1. 観察記録の入力")
-        student_name = st.text_input("生徒名（省略可）", placeholder="例: 山田 太郎")
+        student_name = st.text_input("生徒名（省略可）", placeholder="例: 山田 太郎", key="t1_name")
         subject = st.selectbox("対象・分野", ["総合（通知表/要録）", "行動の記録", "国語", "数学", "理科", "社会", "英語", "体育", "特別活動・その他"])
         episodes = st.text_area(
-            "具体的なエピソード・観察メモ", 
+            "観察メモ・エピソード", 
             placeholder="短いメモでもOK！\n例:\n・理科 実験で班長\n・後半の計算ミス 自発的にチェック", 
-            height=160
+            height=160,
+            key="t1_episodes"
         )
         max_chars = st.number_input("希望文字数（目安）", min_value=50, max_value=500, value=150, step=10)
         
@@ -129,7 +137,7 @@ with tab1:
         
         if generate_btn:
             if not api_key:
-                st.error("サイドバーでAPIキーを入力してください。")
+                st.error("APIキーを入力してください。")
             elif not episodes:
                 st.warning("エピソードを入力してください。")
             else:
@@ -137,7 +145,6 @@ with tab1:
                     model = genai.GenerativeModel("gemini-2.5-flash")
                     masked_episodes, name_map = mask_pii(episodes, student_name)
                     
-                    # 💡 高度化プロンプト（段階的思考の導入）
                     prompt = f"""
                     あなたはベテランの小学校・中学校教員です。
                     提供された断片的な観察メモから、児童生徒の強みや成長の姿が伝わる質の高い所見文章を作成してください。
@@ -148,22 +155,19 @@ with tab1:
                     - 目安文字数: 約{max_chars}文字前後（指定文字数から±15%以内）
 
                     【作成の手引き（思考プロセス）】
-                    1. 観察メモ内の事実から「どんな資質・能力（主体性、協調性、思考力など）」が表れているかを読み取ってください。
-                    2. 「事実（行い）」だけでなく、「そこに至る姿勢」や「今後の期待・成長」へ自然に繋げてください。
-                    3. 重複した表現を避け、一文一文を適度な長さに保って可読性を高めてください。
+                    1. 観察メモ内の事実から「どんな資質・能力」が表れているかを読み取ってください。
+                    2. 「事実」だけでなく、「そこに至る姿勢」や「今後の期待・成長」へ自然に繋げてください。
 
                     【厳格ルール】
                     - {ending_instruction}
                     - 校内ルール: {st.session_state.school_rules}
-                    - 解説、挨拶、前置きは一切不要です。所見の文章本文のみを出力してください。
+                    - 解説や挨拶は不要です。所見の文章本文のみを出力してください。
                     """
                     
                     with st.spinner(f"AIが作成中（{doc_type}）..."):
                         response = model.generate_content(prompt)
                         final_text = unmask_pii(response.text.strip(), name_map)
-                        
                         st.session_state.generated_findings = final_text
-                        st.session_state.chat_history = [{"role": "assistant", "content": final_text}]
                 except Exception as e:
                     st.error(f"エラーが発生しました: {e}")
 
@@ -175,7 +179,7 @@ with tab1:
             st.markdown("---")
             
             st.caption("💬 **AIに対話で修正指示を出す（チャット調整）**")
-            user_instruction = st.text_input("修正の指示:", placeholder="例: 「あと20文字縮めて」「後半の算数の努力をもっと強調して」")
+            user_instruction = st.text_input("修正の指示:", placeholder="例: 「あと20文字縮めて」「理科の実験の話を強調して」")
             if st.button("✨ 指示通りに微調整する"):
                 if user_instruction and api_key:
                     model = genai.GenerativeModel("gemini-2.5-flash")
@@ -266,9 +270,129 @@ with tab2:
                 )
 
 # ------------------------------------------
-# タブ3: 印刷・校務システム連携
+# タブ3: ✨【新規】所見自動校正 & NGチェック
 # ------------------------------------------
 with tab3:
+    st.subheader("🔍 所見文章の自動校正 & 校内ルールチェック")
+    st.caption("自分で書いた文章や、生成された所見の誤字脱字・文末表記・NG表現を点検します。")
+    
+    col_proof1, col_proof2 = st.columns([1, 1])
+    
+    with col_proof1:
+        check_name = st.text_input("生徒名（省略可）", placeholder="例: 鈴木 花子", key="t3_name")
+        input_text_to_check = st.text_area(
+            "チェックしたい所見文章を貼り付け:",
+            value=st.session_state.generated_findings if st.session_state.generated_findings else "",
+            height=200,
+            placeholder="ここに所見文章を入力または貼り付けてください。"
+        )
+        proofread_btn = st.button("🛡️ 文章を校正・チェックする", type="primary", use_container_width=True)
+
+    with col_proof2:
+        st.subheader("診断＆校正結果")
+        if proofread_btn:
+            if not api_key:
+                st.error("APIキーを入力してください。")
+            elif not input_text_to_check:
+                st.warning("チェックする文章を入力してください。")
+            else:
+                try:
+                    model = genai.GenerativeModel("gemini-2.5-flash")
+                    masked_text, name_map = mask_pii(input_text_to_check, check_name)
+                    
+                    proofread_prompt = f"""
+                    あなたは学校の教頭・学年主任の立場として、提出された所見文章の校正とチェックを行ってください。
+
+                    【対象文章】
+                    {masked_text}
+
+                    【チェック項目】
+                    1. 誤字脱字、不自然な日本語がないか
+                    2. 文末がルール通りになっているか（指定モード: {doc_type}）
+                    3. 校内ルール・NG表現に反していないか（ルール: {st.session_state.school_rules}）
+                    4. 不必要にネガティブな印象を与える表現がないか
+
+                    【出力フォーマット】
+                    ---
+                    ### 🎯 総合診断評価
+                    （「修正不要でこのまま提出可能」または「要修正項目あり」）
+
+                    ### ✏️ 修正提案文章
+                    （問題点を改善した完成版の文章をここに記載）
+
+                    ### 📌 アドバイス・指摘ポイント
+                    （修正理由や、文末・語彙のアドバイスを箇条書きで分かりやすく解説）
+                    ---
+                    """
+                    
+                    with st.spinner("AI教頭がチェック中..."):
+                        res = model.generate_content(proofread_prompt)
+                        final_proof = unmask_pii(res.text.strip(), name_map)
+                        st.session_state.proofread_result = final_proof
+                except Exception as e:
+                    st.error(f"エラーが発生しました: {e}")
+                    
+        if st.session_state.proofread_result:
+            st.markdown(st.session_state.proofread_result)
+
+# ------------------------------------------
+# タブ4: ✨【新規】面談用カルテ作成
+# ------------------------------------------
+with tab4:
+    st.subheader("💬 個人面談・三者面談用「児童・生徒カルテ」作成")
+    st.caption("保護者面談の前に、伝えるべき長所・成長エピソード・家庭での協力依頼を1枚に整理します。")
+    
+    col_c1, col_c2 = st.columns([1, 1])
+    
+    with col_c1:
+        carte_name = st.text_input("生徒名", placeholder="例: 佐藤 健太", key="t4_name")
+        growth_points = st.text_area("学校での良かった点・成長したエピソード", placeholder="例: 運動会で応援団長を務め、下級生を優しくまとめていた。算数のテスト直しを最後まで諦めずに取り組んだ。", height=100)
+        challenges = st.text_area("今後改善したい課題・気になる点", placeholder="例: 提出物の期限が遅れがち。授業中に集中が切れると手元で内職してしまうことがある。", height=100)
+        
+        generate_carte_btn = st.button("📋 面談用カルテを生成する", type="primary", use_container_width=True)
+
+    with col_c2:
+        st.subheader("📄 面談準備シート")
+        if generate_carte_btn:
+            if not api_key:
+                st.error("APIキーを入力してください。")
+            elif not carte_name:
+                st.warning("生徒名を入力してください。")
+            else:
+                try:
+                    model = genai.GenerativeModel("gemini-2.5-flash")
+                    
+                    carte_prompt = f"""
+                    あなたはベテラン教員です。保護者面談（個人面談・三者面談）でスムーズかつ前向きな話し合いができるよう、面談準備用カルテを作成してください。
+
+                    【基本情報】
+                    - 生徒名: {carte_name}
+                    - 良かった点・成長: {growth_points}
+                    - 課題・気になる点: {challenges}
+
+                    【出力フォーマット】
+                    ### 🌟 面談で伝える3つのポイント
+                    1. **【褒める・認める長所】** （具体的エピソードを交えたお褒めの言葉）
+                    2. **【学校での様子と課題】** （課題を前向きな「伸びしろ」として共有する言い回し）
+                    3. **【ご家庭への相談・協力依頼】** （家庭で声をかけてほしいポイントの具体的な提案）
+
+                    ### 💬 面談オープニングの言葉掛け例
+                    （保護者の緊張をほぐし、温かい雰囲気で始めるための一言）
+                    """
+                    
+                    with st.spinner("面談カルテを作成中..."):
+                        res = model.generate_content(carte_prompt)
+                        st.session_state.carte_result = res.text.strip()
+                except Exception as e:
+                    st.error(f"エラーが発生しました: {e}")
+                    
+        if st.session_state.carte_result:
+            st.markdown(st.session_state.carte_result)
+
+# ------------------------------------------
+# タブ5: 印刷 & 校務連携
+# ------------------------------------------
+with tab5:
     st.subheader("🖨️ 印刷プレビュー ＆ 校務システム用コピペ")
     
     if st.session_state.generated_findings:
@@ -283,7 +407,6 @@ with tab3:
         <div style="border: 2px solid #333; padding: 20px; border-radius: 8px; background-color: #fff; color: #000;">
             <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #333; padding-bottom: 8px; margin-bottom: 12px;">
                 <h3 style="margin: 0;">所見確認シート ({doc_type})</h3>
-                <span style="font-size: 14px;">対象: {student_name if student_name else '未設定'}</span>
             </div>
             <p style="font-size: 15px; line-height: 1.8; white-space: pre-wrap; margin-top: 10px;">{st.session_state.generated_findings}</p>
             <div style="margin-top: 20px; text-align: right; font-size: 12px; color: #666;">
@@ -293,4 +416,4 @@ with tab3:
         """
         st.components.v1.html(print_html, height=260, scrolling=True)
     else:
-        st.info("※「個人作成」タブで所見を生成すると、ここにコピー用テキストと印刷枠が表示されます。")
+        st.info("※「所見作成」タブで所見を生成すると、ここにコピー用テキストと印刷枠が表示されます。")
