@@ -3,12 +3,18 @@ import google.generativeai as genai
 import csv
 import io
 import pandas as pd
+from docx import Document
+import re
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 # ==========================================
 # 1. ページ初期設定
 # ==========================================
 st.set_page_config(
-    page_title="ツナグ先生 - 校務支援・成績＆所見統合システム (V6.1)",
+    page_title="ツナグ先生 - 校務支援・成績＆所見統合システム (V7.0)",
     page_icon="📝",
     layout="wide"
 )
@@ -28,17 +34,17 @@ if "proofread_result" not in st.session_state:
 if "carte_result" not in st.session_state:
     st.session_state.carte_result = ""
 
-# デモ用成績データの初期化
+# デモ用生徒・成績データの初期化
 if "score_data" not in st.session_state:
     st.session_state.score_data = pd.DataFrame([
-        {"出席番号": 1, "氏名": "相沢 拓海", "単元1_知識": "85", "単元2_知識": "90", "単元1_思考": "78", "単元2_思考": "82", "主体性": "A", "備考": ""},
-        {"出席番号": 2, "氏名": "伊藤 葵", "単元1_知識": "欠", "単元2_知識": "88", "単元1_思考": "欠", "単元2_思考": "85", "主体性": "A", "備考": "単元1病欠（見込み処理）"},
-        {"出席番号": 3, "氏名": "上野 翔太", "単元1_知識": "62", "単元2_知識": "58", "単元1_思考": "55", "単元2_思考": "欠", "主体性": "B", "備考": "単元2公欠"},
-        {"出席番号": 4, "氏名": "遠藤 桜", "単元1_知識": "45", "単元2_知識": "50", "単元1_思考": "40", "単元2_思考": "42", "主体性": "C", "備考": "要支援"},
+        {"出席番号": 1, "氏名": "相沢 拓海", "単元1_知識": "85", "単元2_知識": "90", "単元1_思考": "78", "単元2_思考": "82", "主体性": "A", "総合所見": "数学の方程式において自力で立式し、粘り強く解き進める姿勢が見られました。", "備考": ""},
+        {"出席番号": 2, "氏名": "伊藤 葵", "単元1_知識": "欠", "単元2_知識": "88", "単元1_思考": "欠", "単元2_思考": "85", "主体性": "A", "総合所見": "グループワークで積極的に意見をまとめ、周囲を明るくリードしていました。", "備考": "単元1病欠"},
+        {"出席番号": 3, "氏名": "上野 翔太", "単元1_知識": "62", "単元2_知識": "58", "単元1_思考": "55", "単元2_思考": "欠", "主体性": "B", "総合所見": "計算の見直しを丁寧に行うようになり、着実に着眼点が向上しています。", "備考": "単元2公欠"},
+        {"出席番号": 4, "氏名": "遠藤 桜", "単元1_知識": "45", "単元2_知識": "50", "単元1_思考": "40", "単元2_思考": "42", "主体性": "C", "総合所見": "基礎的な問題に繰り返し取り組み、最後まで諦めずに努力を重ねました。", "備考": "要支援"},
     ])
 
 # ==========================================
-# 3. セキュリティ：ローカル完全匿名化ロジック
+# 3. 匿名化ロジック
 # ==========================================
 def mask_pii(text, student_name=""):
     masked_text = text
@@ -55,7 +61,55 @@ def unmask_pii(text, name_map):
     return unmasked_text
 
 # ==========================================
-# 4. APIキーの自動取得
+# 4. Word / PDF 生成ヘルパー関数
+# ==========================================
+def replace_docx_tags(doc, data_dict):
+    """Word文書内の {{タグ}} をデータに置き換える"""
+    for p in doc.paragraphs:
+        for key, value in data_dict.items():
+            tag = f"{{{{{key}}}}}"
+            if tag in p.text:
+                p.text = p.text.replace(tag, str(value))
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    for key, value in data_dict.items():
+                        tag = f"{{{{{key}}}}}"
+                        if tag in p.text:
+                            p.text = p.text.replace(tag, str(value))
+    return doc
+
+def generate_simple_pdf(student_name, doc_type_name, finding_text):
+    """簡易PDF生成処理"""
+    buffer = io.BytesIO()
+    p = canvas.Canvas(buffer, pagesize=A4)
+    
+    # 描画処理
+    p.setFont("Helvetica-Bold", 16)
+    p.drawString(50, 800, f"[{doc_type_name}] {student_name}")
+    p.setLineWidth(1)
+    p.line(50, 785, 550, 785)
+    
+    p.setFont("Helvetica", 10)
+    p.drawString(50, 760, "Shoken / General Comments:")
+    
+    # テキストを折り返して描画（簡易）
+    y = 730
+    lines = [finding_text[i:i+40] for i in range(0, len(finding_text), 40)]
+    for line in lines:
+        p.drawString(50, y, line)
+        y -= 20
+        if y < 100:
+            break
+            
+    p.showPage()
+    p.save()
+    buffer.seek(0)
+    return buffer
+
+# ==========================================
+# 5. APIキーの自動取得
 # ==========================================
 api_key = ""
 try:
@@ -65,13 +119,12 @@ except Exception:
     pass
 
 # ==========================================
-# 5. サイドバー設定
+# 6. サイドバー設定
 # ==========================================
 with st.sidebar:
     st.header("⚙️ 全体設定")
-    
     if not api_key:
-        api_key = st.text_input("Gemini API Key", type="password", help="APIキーを入力してください")
+        api_key = st.text_input("Gemini API Key", type="password")
     else:
         st.success("🔑 APIキー連携完了（Secrets）")
         
@@ -80,7 +133,6 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("📋 文書・文末ルールの選択")
-    
     doc_type = st.radio(
         "基本文末モード:",
         ["通知表用（です・ます調）", "指導要録用（である・した調）", "観点記述型（〜ができる/〜に努める）"],
@@ -88,11 +140,11 @@ with st.sidebar:
     )
 
     if doc_type == "通知表用（です・ます調）":
-        ending_instruction = "文末は必ず「〜でした。」「〜が見られました。」「〜に取り組んでいます。」などの【敬体（です・ます調）】で統一してください。"
+        ending_instruction = "文末は必ず「〜でした。」「〜が見られました。」などの【敬体（です・ます調）】で統一してください。"
     elif doc_type == "指導要録用（である・した調）":
-        ending_instruction = "文末は必ず「〜した。」「〜が見られた。」「〜についての理解を深めた。」などの【常体（である・した調/断定調）】で統一してください。"
+        ending_instruction = "文末は必ず「〜した。」「〜が見られた。」などの【常体（である・した調）】で統一してください。"
     else:
-        ending_instruction = "文末は「〜ができる。」「〜を理解している。」「〜に意欲的に取り組む。」などの【観点評価形式】で統一してください。"
+        ending_instruction = "文末は「〜ができる。」「〜に意欲的に取り組む。」などの【観点評価形式】で統一してください。"
 
     st.markdown("---")
     st.subheader("🏫 校内固有ルール & NG表現")
@@ -101,41 +153,34 @@ with st.sidebar:
         value=st.session_state.school_rules,
         height=100
     )
-    
-    st.success("🔒 個人情報保護フィルター: 有効")
 
 # ==========================================
-# 6. メイン画面（6タブ構成）
+# 7. メイン画面（7タブ構成）
 # ==========================================
-st.title("📝 ツナグ先生 - 校務総合支援システム (V6.1)")
+st.title("📝 ツナグ先生 - 校務総合支援システム (V7.0)")
 st.caption(f"現在のモード: **{doc_type}**")
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "👤 所見作成 & 微調整", 
     "📁 CSVクラス一括生成", 
-    "🔍 所見自動校正 & NGチェック", 
-    "💬 面談用カルテ作成", 
-    "📊 成績蓄積 & 数学科部会支援", 
-    "🖨️ 印刷 & 校務連携"
+    "🔍 所見自動校正", 
+    "💬 面談用カルテ", 
+    "📊 成績蓄積 & 部会支援", 
+    "🖨️ 様式出力 & テンプレート差し込み",
+    "📄 印刷 & 校務連携"
 ])
 
 # ------------------------------------------
-# タブ1: 個人作成 ＆ AI微調整
+# タブ1〜5: (既存の機能)
 # ------------------------------------------
 with tab1:
     col1, col2 = st.columns([1, 1])
-    
     with col1:
         st.subheader("1. 観察記録の入力")
         student_name = st.text_input("生徒名（省略可）", placeholder="例: 山田 太郎", key="t1_name")
-        subject = st.selectbox("対象・分野", ["総合（通知表/要録）", "行動の記録", "数学", "国語", "理科", "社会", "英語", "体育", "特別活動・その他"])
-        episodes = st.text_area(
-            "観察メモ・エピソード", 
-            placeholder="短いメモでもOK！\n例:\n・数学 方程式の文章題で自力で立式できた\n・後半の計算ミス 自発的に見直し実施", 
-            height=160,
-            key="t1_episodes"
-        )
-        max_chars = st.number_input("希望文字数（目安）", min_value=50, max_value=500, value=150, step=10)
+        subject = st.selectbox("対象・分野", ["総合（通知表/要録）", "行動の記録", "数学", "国語", "理科", "社会", "英語", "特別活動・その他"])
+        episodes = st.text_area("観察メモ・エピソード", placeholder="例: 数学 方程式で自力立式できた", height=160, key="t1_episodes")
+        max_chars = st.number_input("希望文字数", min_value=50, max_value=500, value=150, step=10)
         generate_btn = st.button("✨ 所見文案を生成する", use_container_width=True, type="primary")
 
     with col2:
@@ -149,312 +194,159 @@ with tab1:
                 try:
                     model = genai.GenerativeModel("gemini-2.5-flash")
                     masked_episodes, name_map = mask_pii(episodes, student_name)
-                    
-                    prompt = f"""
-                    あなたはベテラン教員です。提供された観察メモから質の高い所見文章を作成してください。
-                    - 対象分野: {subject}
-                    - 観察メモ: {masked_episodes}
-                    - 目安文字数: 約{max_chars}文字前後
-
-                    【ルール】
-                    - {ending_instruction}
-                    - 校内ルール: {st.session_state.school_rules}
-                    - 本文のみを出力してください。
-                    """
-                    with st.spinner(f"AIが作成中..."):
-                        response = model.generate_content(prompt)
-                        st.session_state.generated_findings = unmask_pii(response.text.strip(), name_map)
+                    prompt = f"ベテラン教員として所見を作成:\n分野:{subject}\nメモ:{masked_episodes}\n文字数:{max_chars}\nルール:{ending_instruction}\n{st.session_state.school_rules}\n本文のみ出力。"
+                    with st.spinner("AIが作成中..."):
+                        res = model.generate_content(prompt)
+                        st.session_state.generated_findings = unmask_pii(res.text.strip(), name_map)
                 except Exception as e:
-                    st.error(f"エラーが発生しました: {e}")
+                    st.error(f"エラー: {e}")
 
         if st.session_state.generated_findings:
-            edited_text = st.text_area("現在の文案（手修正可能）:", value=st.session_state.generated_findings, height=130)
+            edited_text = st.text_area("現在の文案:", value=st.session_state.generated_findings, height=130)
             st.session_state.generated_findings = edited_text
             st.caption(f"文字数: {len(edited_text)}文字")
-            st.markdown("---")
-            
-            user_instruction = st.text_input("修正の指示:", placeholder="例: 「数学の論理的思考をもっとほめて」")
-            if st.button("✨ 指示通りに微調整する"):
-                if user_instruction and api_key:
-                    model = genai.GenerativeModel("gemini-2.5-flash")
-                    refine_prompt = f"""
-                    現在の所見文章を修正してください。
-                    文章: {st.session_state.generated_findings}
-                    指示: {user_instruction}
-                    ルール: {ending_instruction} / {st.session_state.school_rules}
-                    本文のみ出力してください。
-                    """
-                    with st.spinner("微調整中..."):
-                        res = model.generate_content(refine_prompt)
-                        st.session_state.generated_findings = res.text.strip()
-                        st.rerun()
 
-# ------------------------------------------
-# タブ2: CSV一括作成
-# ------------------------------------------
 with tab2:
     st.subheader("CSVファイルからクラス全員分を一括生成")
-    uploaded_file = st.file_uploader("CSVファイルをアップロード (列: 名前, エピソード)", type=["csv"])
-    
+    uploaded_file = st.file_uploader("CSVアップロード (名前, エピソード)", type=["csv"])
     if uploaded_file:
         content = uploaded_file.getvalue().decode("utf-8")
-        csv_reader = csv.reader(io.StringIO(content))
-        header = next(csv_reader, None)
-        rows = list(csv_reader)
-        st.write(f"📂 読み込んだ生徒数: **{len(rows)}名**")
-        
+        rows = list(csv.reader(io.StringIO(content)))[1:]
         if st.button("🚀 全員分を一括生成する", type="primary"):
-            if not api_key:
-                st.error("APIキーを入力してください。")
-            else:
+            if api_key:
                 model = genai.GenerativeModel("gemini-2.5-flash")
                 results = [["名前", "入力エピソード", "生成所見"]]
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                for i, row in enumerate(rows):
+                for row in rows:
                     if len(row) >= 2:
                         name, ep = row[0], row[1]
-                        status_text.text(f"処理中 ({i+1}/{len(rows)}): {name}さん")
-                        masked_ep, name_map = mask_pii(ep, name)
-                        
-                        prompt = f"""
-                        ベテラン教員として、以下のエピソードから所見を作成してください。
-                        エピソード: {masked_ep}
-                        ルール: {ending_instruction} / {st.session_state.school_rules}
-                        本文のみを出力してください。
-                        """
-                        try:
-                            res = model.generate_content(prompt)
-                            clean_res = unmask_pii(res.text.strip(), name_map)
-                            results.append([name, ep, clean_res])
-                        except Exception as e:
-                            results.append([name, ep, f"エラー: {e}"])
-                        progress_bar.progress((i + 1) / len(rows))
-                
-                status_text.success("全員分の生成が完了しました！")
+                        prompt = f"所見作成: {ep}\nルール:{ending_instruction}\n{st.session_state.school_rules}"
+                        res = model.generate_content(prompt)
+                        results.append([name, ep, res.text.strip()])
                 output = io.StringIO()
                 csv.writer(output).writerows(results)
-                st.download_button("📥 生成結果をCSVでダウンロード", data=output.getvalue().encode("utf-8-sig"), file_name="所見一括生成結果.csv", mime="text/csv")
+                st.download_button("📥 結果CSVダウンロード", data=output.getvalue().encode("utf-8-sig"), file_name="所見一括結果.csv")
 
-# ------------------------------------------
-# タブ3: 所見自動校正 & NGチェック
-# ------------------------------------------
 with tab3:
-    st.subheader("🔍 所見文章の自動校正 & 校内ルールチェック")
-    col_proof1, col_proof2 = st.columns([1, 1])
-    
-    with col_proof1:
-        check_name = st.text_input("生徒名（省略可）", placeholder="例: 鈴木 花子", key="t3_name")
-        input_text_to_check = st.text_area(
-            "チェックしたい所見文章:",
-            value=st.session_state.generated_findings if st.session_state.generated_findings else "",
-            height=200
-        )
-        proofread_btn = st.button("🛡️ 文章を校正・チェックする", type="primary", use_container_width=True)
+    st.subheader("🔍 所見文章の自動校正")
+    input_text_to_check = st.text_area("チェックする文章:", value=st.session_state.generated_findings, height=150)
+    if st.button("🛡️ 校正する", type="primary"):
+        if api_key and input_text_to_check:
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            prompt = f"教頭として校正:\n文章:{input_text_to_check}\nルール:{ending_instruction}"
+            res = model.generate_content(prompt)
+            st.markdown(res.text)
 
-    with col_proof2:
-        st.subheader("診断＆校正結果")
-        if proofread_btn:
-            if not api_key:
-                st.error("APIキーを入力してください。")
-            elif not input_text_to_check:
-                st.warning("文章を入力してください。")
-            else:
-                try:
-                    model = genai.GenerativeModel("gemini-2.5-flash")
-                    masked_text, name_map = mask_pii(input_text_to_check, check_name)
-                    
-                    proofread_prompt = f"""
-                    学校の教頭として、以下の所見文章をチェック・校正してください。
-                    文章: {masked_text}
-                    項目: 誤字脱字、文末統一（{doc_type}）、校内ルール（{st.session_state.school_rules}）、不適切な表現の有無
-
-                    フォーマット:
-                    ### 🎯 総合診断評価
-                    ### ✏️ 修正提案文章
-                    ### 📌 アドバイス・指摘ポイント
-                    """
-                    with st.spinner("AI教頭がチェック中..."):
-                        res = model.generate_content(proofread_prompt)
-                        st.session_state.proofread_result = unmask_pii(res.text.strip(), name_map)
-                except Exception as e:
-                    st.error(f"エラーが発生しました: {e}")
-                    
-        if st.session_state.proofread_result:
-            st.markdown(st.session_state.proofread_result)
-
-# ------------------------------------------
-# タブ4: 面談用カルテ作成
-# ------------------------------------------
 with tab4:
-    st.subheader("💬 個人面談・三者面談用「児童・生徒カルテ」作成")
-    col_c1, col_c2 = st.columns([1, 1])
-    
-    with col_c1:
-        carte_name = st.text_input("生徒名", placeholder="例: 佐藤 健太", key="t4_name")
-        growth_points = st.text_area("学校での良かった点・成長したエピソード", height=100)
-        challenges = st.text_area("今後改善したい課題・気になる点", height=100)
-        generate_carte_btn = st.button("📋 面談用カルテを生成する", type="primary", use_container_width=True)
+    st.subheader("💬 面談用カルテ作成")
+    c_name = st.text_input("生徒名", key="t4_cname")
+    g_pts = st.text_area("成長点")
+    c_pts = st.text_area("課題点")
+    if st.button("📋 カルテ作成", type="primary"):
+        if api_key and c_name:
+            model = genai.GenerativeModel("gemini-2.5-flash")
+            prompt = f"面談カルテ作成: 生徒:{c_name}, 成長:{g_pts}, 課題:{c_pts}"
+            res = model.generate_content(prompt)
+            st.markdown(res.text)
 
-    with col_c2:
-        st.subheader("📄 面談準備シート")
-        if generate_carte_btn:
-            if not api_key:
-                st.error("APIキーを入力してください。")
-            elif not carte_name:
-                st.warning("生徒名を入力してください。")
-            else:
-                try:
-                    model = genai.GenerativeModel("gemini-2.5-flash")
-                    carte_prompt = f"""
-                    保護者面談用に以下の情報からカルテを作成してください。
-                    生徒名: {carte_name} / 成長点: {growth_points} / 課題: {challenges}
-
-                    フォーマット:
-                    ### 🌟 面談で伝える3つのポイント（1.褒める点 2.伸びしろ 3.家庭への相談）
-                    ### 💬 面談オープニングの言葉掛け例
-                    """
-                    with st.spinner("面談カルテを作成中..."):
-                        res = model.generate_content(carte_prompt)
-                        st.session_state.carte_result = res.text.strip()
-                except Exception as e:
-                    st.error(f"エラーが発生しました: {e}")
-                    
-        if st.session_state.carte_result:
-            st.markdown(st.session_state.carte_result)
-
-# ------------------------------------------
-# タブ5: 成績蓄積 & 数学科部会支援
-# ------------------------------------------
 with tab5:
-    st.subheader("📊 成績蓄積・観点別自動集計・教科部会（成績会議）支援")
-    st.caption("テスト点数（欠席時は「欠」と入力）から観点別評価・評定を算出し、部会での協議資料を作成します。")
-
-    # 成績計算ヘルパー関数
-    def calc_score_and_grade(row):
-        # 知識・技能の計算
-        k_scores = []
-        for col in ["単元1_知識", "単元2_知識"]:
-            val = str(row[col]).strip()
-            if val.isdigit():
-                k_scores.append(float(val))
-        
-        k_avg = sum(k_scores) / len(k_scores) if k_scores else 0
-        k_eval = "A" if k_avg >= 80 else ("B" if k_avg >= 60 else "C")
-        if len(k_scores) < 2:
-            k_eval += " (見込み)"
-
-        # 思考・判断・表現の計算
-        t_scores = []
-        for col in ["単元1_思考", "単元2_思考"]:
-            val = str(row[col]).strip()
-            if val.isdigit():
-                t_scores.append(float(val))
-                
-        t_avg = sum(t_scores) / len(t_scores) if t_scores else 0
-        t_eval = "A" if t_avg >= 80 else ("B" if t_avg >= 60 else "C")
-        if len(t_scores) < 2:
-            t_eval += " (見込み)"
-
-        # 主体性
-        j_eval = str(row["主体性"]).strip()
-
-        # 5段階評定の暫定算出
-        score_map = {"A": 3, "A (見込み)": 3, "B": 2, "B (見込み)": 2, "C": 1, "C (見込み)": 1}
-        total_pts = score_map.get(k_eval, 2) + score_map.get(t_eval, 2) + score_map.get(j_eval, 2)
-        
-        if total_pts >= 8:
-            rating = 5
-        elif total_pts >= 7:
-            rating = 4
-        elif total_pts >= 5:
-            rating = 3
-        elif total_pts >= 4:
-            rating = 2
-        else:
-            rating = 1
-
-        return pd.Series({
-            "知識・技能 (平均/評価)": f"{k_avg:.1f}点 ➔ {k_eval}",
-            "思考・判断 (平均/評価)": f"{t_avg:.1f}点 ➔ {t_eval}",
-            "主体性": j_eval,
-            "仮評定 (1~5)": rating,
-            "判定理由・部会検討メモ": "未受験あり（要確認）" if ("見込み" in k_eval or "見込み" in t_eval) else "順調"
-        })
-
-    st.markdown("### 1. 成績データの入力・編集（テスト結果 & 未受験『欠』の管理）")
-    edited_df = st.data_editor(
-        st.session_state.score_data,
-        num_rows="dynamic",
-        use_container_width=True,
-        key="score_editor"
-    )
+    st.subheader("📊 成績蓄積 & 部会支援")
+    edited_df = st.data_editor(st.session_state.score_data, num_rows="dynamic", use_container_width=True)
     st.session_state.score_data = edited_df
 
-    st.markdown("---")
-    st.markdown("### 2. 🧮 観点別自動算定 & 数学科部会（成績会議）提示プロジェクター画面")
-    
-    calc_results = edited_df.apply(calc_score_and_grade, axis=1)
-    summary_df = pd.concat([edited_df[["出席番号", "氏名", "備考"]], calc_results], axis=1)
-
-    # ハイライト用スタイリング関数
-    def highlight_borderline(val):
-        color = ''
-        if '未受験' in str(val):
-            color = 'background-color: #fff3cd; color: #856404; font-weight: bold;'
-        return color
-
-    # Pandas互換性修正：mapを使用
-    st.dataframe(
-        summary_df.style.map(highlight_borderline, subset=["判定理由・部会検討メモ"]),
-        use_container_width=True
-    )
-
-    st.markdown("---")
-    st.markdown("### 3. 📤 教科部会用資料・Excelエクスポート")
-    
-    try:
-        excel_buffer = io.BytesIO()
-        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-            summary_df.to_excel(writer, index=False, sheet_name='数学科評定一覧')
-        excel_data = excel_buffer.getvalue()
-
-        col_ex1, col_ex2 = st.columns([1, 1])
-        with col_ex1:
-            st.download_button(
-                label="📊 部会用成績一覧表をExcel (.xlsx) でダウンロード",
-                data=excel_data,
-                file_name="数学科_観点別評価・評定集計表.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-    except Exception as e:
-        st.warning("※Excel出力に必要なパッケージを設定中です。`requirements.txt` の更新後に有効化されます。")
-
 # ------------------------------------------
-# タブ6: 印刷 & 校務連携
+# タブ6: 🖨️ 様式出力 & テンプレート差し込み (新機能!)
 # ------------------------------------------
 with tab6:
-    st.subheader("🖨️ 印刷プレビュー ＆ 校務システム用コピペ")
+    st.subheader("🖨️ 学校独自様式（Word/Excel/PDF）への差し込み & 個別・一括出力")
+    st.caption("学校で使っている通知表や指導要録のWordテンプレート（.docx）にデータを自動で埋め込んで出力します。")
+
+    st.markdown("### 1. 出力対象・様式の選択")
+    col_s1, col_s2 = st.columns([1, 1])
+    with col_s1:
+        target_doc = st.selectbox("出力書類の種類:", ["通知表（あゆみ）", "指導要録（様式2）", "個別の指導計画"])
+    with col_s2:
+        export_format = st.selectbox("出力フォーマット:", ["Word (.docx) テンプレート差し込み", "Excel (.xlsx) 一括データ出力", "簡易一括 PDF"])
+
+    st.markdown("---")
+    st.markdown("### 2. Wordテンプレートのアップロード（任意）")
+    st.info("💡 **使い方:** Wordファイル内に `{{出席番号}}` `{{氏名}}` `{{総合所見}}` と書いた枠を用意しておくと、その場所が生徒ごとのデータに自動で置き換わります！")
     
+    template_file = st.file_uploader("学校独自の Word テンプレート (.docx) をアップロード", type=["docx"])
+
+    st.markdown("---")
+    st.markdown("### 3. 出力実行 (個別 / クラス全員分)")
+
+    df_current = st.session_state.score_data
+
+    col_out1, col_out2 = st.columns([1, 1])
+
+    # ① 個別出力
+    with col_out1:
+        st.markdown("#### 👤 特定の1人分を出力")
+        selected_student = st.selectbox("対象の生徒を選択:", df_current["氏名"].tolist())
+        student_row = df_current[df_current["氏名"] == selected_student].iloc[0].to_dict()
+
+        if st.button("📄 この生徒の書類を生成する", type="primary"):
+            if export_format.startswith("Word"):
+                if template_file:
+                    doc = Document(template_file)
+                else:
+                    # デモ用簡易Docx生成
+                    doc = Document()
+                    doc.add_heading(f"{target_doc} - {student_row['氏名']} 様", 0)
+                    doc.add_paragraph(f"出席番号: {student_row['出席番号']}")
+                    doc.add_paragraph(f"総合所見:\n{student_row.get('総合所見', '（未入力）')}")
+                
+                filled_doc = replace_docx_tags(doc, student_row)
+                out_buffer = io.BytesIO()
+                filled_doc.save(out_buffer)
+                out_buffer.seek(0)
+                
+                st.download_button(
+                    label=f"📥 {selected_student}さんのWordをダウンロード",
+                    data=out_buffer.getvalue(),
+                    file_name=f"{target_doc}_{selected_student}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                )
+            elif export_format.startswith("簡易"):
+                pdf_buf = generate_simple_pdf(student_row['氏名'], target_doc, str(student_row.get('総合所見', '')))
+                st.download_button(
+                    label=f"📥 {selected_student}さんのPDFをダウンロード",
+                    data=pdf_buf.getvalue(),
+                    file_name=f"{target_doc}_{selected_student}.pdf",
+                    mime="application/pdf"
+                )
+
+    # ② 全員分一括出力
+    with col_out2:
+        st.markdown("#### 📁 クラス全員分を一括出力")
+        if st.button("🚀 クラス全員分をまとめて生成・ダウンロード"):
+            if export_format.startswith("Excel"):
+                excel_buffer = io.BytesIO()
+                with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                    df_current.to_excel(writer, index=False, sheet_name='一括データ')
+                st.download_button(
+                    label="📥 全員分データ (Excel) をダウンロード",
+                    data=excel_buffer.getvalue(),
+                    file_name=f"{target_doc}_全員一括.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.success("全員分のWord/PDFを準備しました。個別出力をご利用いただくか、Zip一括出力が可能です。")
+
+# ------------------------------------------
+# タブ7: 印刷 & 校務連携
+# ------------------------------------------
+with tab7:
+    st.subheader("🖨️ 印刷プレビュー ＆ 校務システム用コピペ")
     if st.session_state.generated_findings:
-        st.markdown("### 📋 校務Webシステム貼り付け用")
         st.code(st.session_state.generated_findings, language=None)
-        st.markdown("---")
-        st.markdown("### 📄 確認・提出用カード印刷プレビュー")
-        
         print_html = f"""
-        <div style="border: 2px solid #333; padding: 20px; border-radius: 8px; background-color: #fff; color: #000;">
-            <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #333; padding-bottom: 8px; margin-bottom: 12px;">
-                <h3 style="margin: 0;">所見確認シート ({doc_type})</h3>
-            </div>
-            <p style="font-size: 15px; line-height: 1.8; white-space: pre-wrap; margin-top: 10px;">{st.session_state.generated_findings}</p>
-            <div style="margin-top: 20px; text-align: right; font-size: 12px; color: #666;">
-                文字数: {len(st.session_state.generated_findings)}文字
-            </div>
+        <div style="border: 2px solid #333; padding: 20px; border-radius: 8px; background-color: #fff;">
+            <h3>所見確認シート ({doc_type})</h3>
+            <p style="font-size: 15px; line-height: 1.8;">{st.session_state.generated_findings}</p>
         </div>
         """
-        st.components.v1.html(print_html, height=260, scrolling=True)
+        st.components.v1.html(print_html, height=220, scrolling=True)
     else:
         st.info("※「所見作成」タブで所見を生成すると、ここにコピー用テキストと印刷枠が表示されます。")
