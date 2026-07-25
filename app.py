@@ -16,9 +16,56 @@ st.set_page_config(
     layout="wide"
 )
 
+# 💡 上部余白調整とグループ見出しの文字欠け防止CSS
 st.markdown("""
     <style>
-    .student-card { background-color: #f8f9fa; border: 1px solid #dee2e6; padding: 15px; border-radius: 8px; margin-bottom: 15px; }
+    /* 上部余白を適正値に調整（見切れるのを防止） */
+    .block-container {
+        padding-top: 2.5rem !important;
+        padding-bottom: 1rem !important;
+    }
+    
+    .student-card { 
+        background-color: #f8f9fa; 
+        border: 1px solid #dee2e6; 
+        padding: 15px; 
+        border-radius: 8px; 
+        margin-bottom: 15px; 
+    }
+
+    /* グループ見出しのスタイル（line-heightとpaddingで高さ・文字表示を最適化） */
+    .menu-group-header {
+        font-size: 0.95rem;
+        font-weight: bold;
+        line-height: 1.5 !important;
+        margin-top: 8px;
+        margin-bottom: 6px;
+        padding: 6px 10px;
+        border-radius: 4px;
+        display: block;
+    }
+    .homeroom-header {
+        color: #d9534f;
+        background-color: #fdf2f2;
+        border-left: 4px solid #d9534f;
+    }
+    .subject-header {
+        color: #1f77b4;
+        background-color: #f0f7fc;
+        border-left: 4px solid #1f77b4;
+    }
+
+    /* 1段目：学級担任用ボタンの色付け（オレンジ系） */
+    div[data-testid="stSegmentedControl"]:nth-of-type(1) button[aria-selected="true"] {
+        background-color: #e67e22 !important;
+        color: white !important;
+    }
+
+    /* 2段目：教科担当用ボタンの色付け（ブルー系） */
+    div[data-testid="stSegmentedControl"]:nth-of-type(2) button[aria-selected="true"] {
+        background-color: #1f77b4 !important;
+        color: white !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -44,7 +91,7 @@ def generate_full_dummy_data():
     master_list = []
     score_list = []
     
-    random.seed(42) # データ再生成時の再現性を確保
+    random.seed(42)
 
     for cls_name, count in classes_config:
         for num in range(1, count + 1):
@@ -53,7 +100,6 @@ def generate_full_dummy_data():
             gname = male_names[(num - 1) % len(male_names)] if gender == "男" else female_names[(num - 1) % len(female_names)]
             full_name = f"{sname} {gname}"
 
-            # 1. 生徒マスターデータ
             master_list.append({
                 "クラス": cls_name,
                 "出席番号": num,
@@ -64,7 +110,6 @@ def generate_full_dummy_data():
                 "備考": "担任クラス" if cls_name == "1年1組" else "授業担当"
             })
 
-            # 2. 自教科（数学）の成績・複数回テストデータ
             mid_score = random.randint(45, 98)
             final_score = random.randint(50, 100)
             k1 = random.randint(55, 98)
@@ -86,7 +131,6 @@ def generate_full_dummy_data():
                 "総合所見": f"{'課題に対して粘り強く思考し、工夫して解決策を導くことができました。' if grade >= 4 else '基礎的な計算力の定着が見られ、授業中の挙手・発言も意欲的です。'}"
             })
 
-    # 3. 1年1組（担任クラス・40名）の強化版日々メモデータ（約100件）
     logs_list = []
     dates = ["2026-04-15", "2026-04-22", "2026-05-10", "2026-05-18", "2026-06-04", "2026-06-15", "2026-07-02"]
     memo_templates = [
@@ -101,7 +145,6 @@ def generate_full_dummy_data():
 
     c1_students = [m for m in master_list if m["クラス"] == "1年1組"]
     for idx, st_item in enumerate(c1_students):
-        # 1人あたり2〜3件の観察記録を自動割り振り
         num_memos = 2 if idx % 2 == 0 else 3
         for i in range(num_memos):
             d = dates[(idx + i) % len(dates)]
@@ -126,8 +169,9 @@ if "school_year" not in st.session_state:
     st.session_state.school_year = "2026"
 if "teacher_name" not in st.session_state:
     st.session_state.teacher_name = "山田 太郎"
+if "active_menu" not in st.session_state:
+    st.session_state.active_menu = "📝 ① 日々メモ蓄積 & 所見"
 
-# 大容量ダミーデータの読み込み
 df_master, df_scores, df_logs = generate_full_dummy_data()
 
 if "student_master" not in st.session_state:
@@ -139,7 +183,6 @@ if "daily_logs" not in st.session_state:
 if "subject_scores" not in st.session_state:
     st.session_state.subject_scores = df_scores
 
-# APIキー設定
 api_key = ""
 try:
     if "GEMINI_API_KEY" in st.secrets:
@@ -147,7 +190,13 @@ try:
 except Exception:
     pass
 
+# --- サイドバーエリア ---
 with st.sidebar:
+    # 💡 パターン1：タイトルを左側ペインに移動
+    st.title("🏫 ツナグ先生")
+    st.caption(f"統合校務支援システム (V9.4 / {st.session_state.school_year}年度)")
+    st.markdown("---")
+
     st.header("⚙️ システム・基本情報")
     st.session_state.school_year = st.text_input("年度設定", st.session_state.school_year)
     st.session_state.teacher_name = st.text_input("担任教員名", st.session_state.teacher_name)
@@ -183,23 +232,6 @@ def replace_docx_tags(doc, data_dict):
                             p.text = p.text.replace(tag, str(value))
     return doc
 
-def normalize_col(col, file_name=""):
-    c = str(col).strip()
-    if re.search(r"番号|No", c): return "出席番号"
-    if re.search(r"氏名|名前", c): return "氏名"
-    
-    subj = "教科"
-    for s in ["国語", "社会", "数学", "理科", "英語", "音楽", "美術", "保体", "技術", "家庭"]:
-        if s in c or s in file_name:
-            subj = s; break
-            
-    if "評定" in c or "評価" in c: return f"{subj}_評定"
-    if "知識" in c: return f"{subj}_観点_知識"
-    if "思考" in c: return f"{subj}_観点_思考"
-    if "主体" in c: return f"{subj}_観点_主体性"
-    if "所見" in c: return f"{subj}_所見"
-    return f"{subj}_{c}"
-
 def get_all_classes():
     classes = sorted(st.session_state.student_master["クラス"].dropna().unique().tolist())
     return classes if classes else ["1年1組"]
@@ -213,31 +245,57 @@ def get_active_students(cls_name=None):
 
 
 # ==========================================
-# 4. メイン画面（セグメントコントロール構成）
+# 4. メイン画面（担任/教科 視覚的グループ分けメニュー）
 # ==========================================
-st.title(f"🏫 ツナグ先生 - 統合校務支援システム (V9.4 / {st.session_state.school_year}年度)")
 
-# st.tabsの代わりにst.segmented_controlを使用（横幅に応じて自動折り返し）
-menu_options = [
-    "⚙️ ⓪ 担任＆授業担当 名簿管理",
+# 💡 学級担任用・教科担当用でメニューオプションを分割
+homeroom_options = [
     "📝 ① 日々メモ蓄積 & 所見",
     "📁 ② CSV一括生成",
     "🔍 ③ 所見データ自動校正",
     "💬 ④ 蓄積連動カルテ",
-    "📊 ⑤ 成績＆評定自動計算",
-    "📈 ⑥ 学期推移ダッシュボード",
     "🔄 ⑦ 担任用 全教科成績集約",
     "🖨️ ⑧ 通知表・要録 印刷＆出力"
 ]
 
-selected_menu = st.segmented_control(
-    "機能選択",
-    options=menu_options,
-    default=menu_options[0],
+subject_options = [
+    "📊 ⑤ 成績＆評定自動計算",
+    "📈 ⑥ 学期推移ダッシュボード",
+    "⚙️ ⓪ 担任＆授業担当 名簿管理"
+]
+
+# メニュー選択の同期処理
+def sync_menu_homeroom():
+    st.session_state.active_menu = st.session_state.hr_menu
+
+def sync_menu_subject():
+    st.session_state.active_menu = st.session_state.sub_menu
+
+# --- 1段目：学級担任向け機能 ---
+st.markdown('<div class="menu-group-header homeroom-header">🏠 学級担任メイン機能</div>', unsafe_allow_html=True)
+st.segmented_control(
+    "学級担任機能",
+    options=homeroom_options,
+    default=st.session_state.active_menu if st.session_state.active_menu in homeroom_options else None,
+    key="hr_menu",
+    on_change=sync_menu_homeroom,
+    label_visibility="collapsed"
+)
+
+# --- 2段目：教科担当向け機能 ---
+st.markdown('<div class="menu-group-header subject-header">📚 教科担当メイン機能</div>', unsafe_allow_html=True)
+st.segmented_control(
+    "教科担当機能",
+    options=subject_options,
+    default=st.session_state.active_menu if st.session_state.active_menu in subject_options else None,
+    key="sub_menu",
+    on_change=sync_menu_subject,
     label_visibility="collapsed"
 )
 
 st.divider()
+
+selected_menu = st.session_state.active_menu
 
 # ------------------------------------------
 # 機能0: ⓪ 担任＆授業担当 名簿管理
@@ -306,7 +364,7 @@ if selected_menu == "⚙️ ⓪ 担任＆授業担当 名簿管理":
             st.text_area("Excel貼り付け用タブ区切りテキスト (Ctrl+V用):", tsv_text, height=100)
 
 # ------------------------------------------
-# 機能1: ① 日々メモ蓄積 & 所見生成
+# 機能1: ① 日々メモ蓄積 & 所見
 # ------------------------------------------
 elif selected_menu == "📝 ① 日々メモ蓄積 & 所見":
     col_a, col_b = st.columns([1, 1.2])
@@ -480,7 +538,6 @@ elif selected_menu == "🔄 ⑦ 担任用 全教科成績集約":
     if st.button("🎲 他教科（国語・英語・理科・社会）の集約用ダミーデータを自動生成して結合テスト"):
         c1_students = st.session_state.student_master[st.session_state.student_master["クラス"] == "1年1組"]["氏名"].tolist()
         
-        # 他教科データ自動作成
         kokugo_df = pd.DataFrame([{"氏名": n, "国語_評定": random.randint(2, 5), "国語_観点_知識": random.randint(60, 95)} for n in c1_students])
         eigo_df = pd.DataFrame([{"氏名": n, "英語_評定": random.randint(2, 5), "英語_観点_知識": random.randint(55, 98)} for n in c1_students])
         
