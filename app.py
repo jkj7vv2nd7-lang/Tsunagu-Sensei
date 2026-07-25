@@ -8,7 +8,7 @@ import pandas as pd
 # 1. ページ初期設定
 # ==========================================
 st.set_page_config(
-    page_title="ツナグ先生 - 校務支援・成績＆所見統合システム (V6.0)",
+    page_title="ツナグ先生 - 校務支援・成績＆所見統合システム (V6.1)",
     page_icon="📝",
     layout="wide"
 )
@@ -105,9 +105,9 @@ with st.sidebar:
     st.success("🔒 個人情報保護フィルター: 有効")
 
 # ==========================================
-# 6. メイン画面（6タブ構成へ拡張）
+# 6. メイン画面（6タブ構成）
 # ==========================================
-st.title("📝 ツナグ先生 - 校務総合支援システム (V6.0)")
+st.title("📝 ツナグ先生 - 校務総合支援システム (V6.1)")
 st.caption(f"現在のモード: **{doc_type}**")
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -325,7 +325,7 @@ with tab4:
             st.markdown(st.session_state.carte_result)
 
 # ------------------------------------------
-# タブ5: ✨【新規拡張】成績蓄積 & 数学科部会支援
+# タブ5: 成績蓄積 & 数学科部会支援
 # ------------------------------------------
 with tab5:
     st.subheader("📊 成績蓄積・観点別自動集計・教科部会（成績会議）支援")
@@ -402,32 +402,35 @@ with tab5:
     def highlight_borderline(val):
         color = ''
         if '未受験' in str(val):
-            color = 'background-color: #fff3cd; color: #856404; font-weight: bold;' # 黄色ハイライト
+            color = 'background-color: #fff3cd; color: #856404; font-weight: bold;'
         return color
 
+    # Pandas互換性修正：mapを使用
     st.dataframe(
-        summary_df.style.applymap(highlight_borderline, subset=["判定理由・部会検討メモ"]),
+        summary_df.style.map(highlight_borderline, subset=["判定理由・部会検討メモ"]),
         use_container_width=True
     )
 
     st.markdown("---")
     st.markdown("### 3. 📤 教科部会用資料・Excelエクスポート")
     
-    # Excelデータ作成
-    excel_buffer = io.BytesIO()
-    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-        summary_df.to_excel(writer, index=False, sheet_name='数学科評定一覧')
-    excel_data = excel_buffer.getvalue()
+    try:
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            summary_df.to_excel(writer, index=False, sheet_name='数学科評定一覧')
+        excel_data = excel_buffer.getvalue()
 
-    col_ex1, col_ex2 = st.columns([1, 1])
-    with col_ex1:
-        st.download_button(
-            label="📊 部会用成績一覧表をExcel (.xlsx) でダウンロード",
-            data=excel_data,
-            file_name="数学科_観点別評価・評定集計表.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
+        col_ex1, col_ex2 = st.columns([1, 1])
+        with col_ex1:
+            st.download_button(
+                label="📊 部会用成績一覧表をExcel (.xlsx) でダウンロード",
+                data=excel_data,
+                file_name="数学科_観点別評価・評定集計表.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+    except Exception as e:
+        st.warning("※Excel出力に必要なパッケージを設定中です。`requirements.txt` の更新後に有効化されます。")
 
 # ------------------------------------------
 # タブ6: 印刷 & 校務連携
