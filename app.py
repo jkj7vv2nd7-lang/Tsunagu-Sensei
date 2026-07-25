@@ -10,7 +10,7 @@ from docx import Document
 # 1. ページ設定 & カスタムCSS
 # ==========================================
 st.set_page_config(
-    page_title="ツナグ先生 - 統合校務支援システム (V9.2)",
+    page_title="ツナグ先生 - 統合校務支援システム (V9.3)",
     page_icon="🏫",
     layout="wide"
 )
@@ -119,6 +119,11 @@ def normalize_col(col, file_name=""):
     if "所見" in c: return f"{subj}_所見"
     return f"{subj}_{c}"
 
+# 登録済みクラス一覧を取得する関数（動的）
+def get_all_classes():
+    classes = sorted(st.session_state.student_master["クラス"].dropna().unique().tolist())
+    return classes if classes else ["1年1組"]
+
 # 在籍生徒リスト取得関数
 def get_active_students(cls_name=None):
     df = st.session_state.student_master
@@ -130,7 +135,7 @@ def get_active_students(cls_name=None):
 # ==========================================
 # 3. メイン画面（タブ構成）
 # ==========================================
-st.title(f"🏫 ツナグ先生 - 統合校務支援システム (V9.2 / {st.session_state.school_year}年度)")
+st.title(f"🏫 ツナグ先生 - 統合校務支援システム (V9.3 / {st.session_state.school_year}年度)")
 
 tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "⚙️ ⓪ 担任＆授業担当 名簿管理",
@@ -145,18 +150,19 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
 ])
 
 # ------------------------------------------
-# タブ0: ⓪ 担任＆授業担当 名簿管理（コピペ貼り付け対応機能追加！）
+# タブ0: ⓪ 担任＆授業担当 名簿管理（クラス追加対応）
 # ------------------------------------------
 with tab0:
     st.subheader("⚙️ 学級名簿 ＆ 授業担当クラス名簿の管理")
     
-    m_tab1, m_tab2 = st.tabs(["🏫 担任学級名簿・転入転出", "📚 授業担当クラス名簿（成績用コピペ出力）"])
+    m_tab1, m_tab2 = st.tabs(["🏫 担任学級名簿・クラス追加・転入転出", "📚 授業担当クラス名簿（成績用コピペ出力）"])
     
     with m_tab1:
         col_m1, col_m2 = st.columns([1.2, 1])
         
         with col_m1:
             st.markdown("### 📋 現在のマスター学級名簿")
+            st.caption("※ テーブル一番下の『＋』から生徒を追加したり、『クラス』名を直接「1年3組」などに変更・自由追加できます。")
             edited_master = st.data_editor(
                 st.session_state.student_master,
                 num_rows="dynamic",
@@ -166,25 +172,33 @@ with tab0:
             st.session_state.student_master = edited_master
 
         with col_m2:
-            st.markdown("### 🔄 転入・転出の手続き")
-            action_type = st.radio("手続き種別:", ["年度途中 転入生の追加", "年度途中 転出（除籍）処理"])
+            st.markdown("### 🔄 転入・転出・新クラス生徒追加")
+            action_type = st.radio("手続き種別:", ["生徒の新規登録・転入処理", "年度途中 転出（除籍）処理"])
             
-            if action_type == "年度途中 転入生の追加":
+            if action_type == "生徒の新規登録・転入処理":
                 with st.form("trans_in_form"):
-                    in_cls = st.selectbox("転入クラス", ["2年1組", "2年2組"])
-                    in_num = st.number_input("出席番号", min_value=1, max_value=50, value=3)
+                    current_classes = get_all_classes()
+                    in_cls_select = st.selectbox("登録クラス（既存から選択）", current_classes + ["新規クラスを直接入力"])
+                    
+                    in_cls_custom = ""
+                    if in_cls_select == "新規クラスを直接入力":
+                        in_cls_custom = st.text_input("新規クラス名を入力（例: 1年3組、3年1組）", placeholder="3年1組")
+                    
+                    target_cls = in_cls_custom if in_cls_select == "新規クラスを直接入力" else in_cls_select
+                    
+                    in_num = st.number_input("出席番号", min_value=1, max_value=50, value=1)
                     in_name = st.text_input("生徒氏名")
                     in_gender = st.selectbox("性別", ["男", "女"])
-                    in_date = st.date_input("転入日")
-                    in_sub = st.form_submit_button("➕ 転入生として名簿に追加")
+                    in_date = st.date_input("登録日・転入日")
+                    in_sub = st.form_submit_button("➕ 生徒を登録する")
                     
-                    if in_sub and in_name:
+                    if in_sub and in_name and target_cls:
                         new_st = pd.DataFrame([{
-                            "クラス": in_cls, "出席番号": in_num, "氏名": in_name, "性別": in_gender,
-                            "ステータス": "在籍", "異動日": str(in_date), "備考": "年度途中転入"
+                            "クラス": target_cls, "出席番号": in_num, "氏名": in_name, "性別": in_gender,
+                            "ステータス": "在籍", "異動日": str(in_date), "備考": "新規登録"
                         }])
                         st.session_state.student_master = pd.concat([st.session_state.student_master, new_st], ignore_index=True)
-                        st.success(f"{in_name} さんを転入生として名簿に登録しました！")
+                        st.success(f"{target_cls} に {in_name} さんを登録しました！")
                         st.rerun()
 
             else:
@@ -205,13 +219,12 @@ with tab0:
 
     with m_tab2:
         st.markdown("### 📚 授業を担当するクラス名簿の抽出・コピペ出力")
-        st.caption("自分が授業を担当するクラスを選択し、成績管理Excelやスプレッドシート、タブ⑤/⑦へそのまま貼り付けられる名簿を生成します。")
+        st.caption("他学年を含む担当クラスを選択し、成績ファイルや他システムへ貼り付けられる名簿を生成します。")
         
-        all_classes = st.session_state.student_master["クラス"].unique().tolist()
+        all_classes = get_all_classes()
         selected_teach_cls = st.multiselect("あなたが授業を担当するクラスを選択:", all_classes, default=all_classes)
         
         if selected_teach_cls:
-            # 在籍生徒のみ抽出
             sub_df = st.session_state.student_master[
                 (st.session_state.student_master["クラス"].isin(selected_teach_cls)) &
                 (st.session_state.student_master["ステータス"] == "在籍")
@@ -220,13 +233,11 @@ with tab0:
             st.write(f"📋 **授業担当名簿（計 {len(sub_df)} 名）**")
             st.dataframe(sub_df, use_container_width=True)
             
-            # 成績シート・他ソフトへの貼り付け用テキストの生成（TSV形式）
             tsv_text = sub_df.to_csv(sep='\t', index=False)
             
             st.markdown("#### 📋 成績管理ファイル（Excel・Googleスプレッドシート等）への貼り付け用データ")
             st.text_area("以下のテキストをコピーし、Excelや成績ファイルの先頭セルにそのまま貼り付け（Ctrl+V）できます:", tsv_text, height=150)
             
-            # 貼り付けボタン補助
             st.download_button(
                 label="📥 授業担当名簿（CSV）を保存",
                 data=sub_df.to_csv(index=False).encode('utf-8-sig'),
@@ -240,12 +251,13 @@ with tab0:
 with tab1:
     col_a, col_b = st.columns([1, 1.2])
     active_students = get_active_students()
+    all_cls = get_all_classes()
     
     with col_a:
         st.subheader("📌 1. 日々の観察メモを蓄積・登録")
         with st.form("add_log_form", clear_on_submit=True):
             f_date = st.date_input("日付")
-            f_class = st.selectbox("クラス", ["2年1組", "2年2組"])
+            f_class = st.selectbox("クラス", all_cls)
             f_name = st.selectbox("生徒氏名（在籍者のみ）", active_students if active_students else ["在籍者なし"])
             f_cat = st.selectbox("対象分野", ["総合・行動の記録", "数学", "国語", "英語", "理科", "社会", "特別活動"])
             f_memo = st.text_area("観察メモ（音声入力可）", placeholder="例: 授業中に手を挙げて自力で答える姿が見られた。")
@@ -278,7 +290,7 @@ with tab1:
 # ------------------------------------------
 with tab2:
     st.subheader("📁 蓄積データをもとにクラス全員の所見を一括生成")
-    target_cls = st.selectbox("一括生成対象クラス:", ["2年1組", "2年2組"])
+    target_cls = st.selectbox("一括生成対象クラス:", get_all_classes())
     
     if st.button("🚀 クラス全員の蓄積メモからCSVを一括生成"):
         cls_memos = st.session_state.daily_logs[st.session_state.daily_logs["クラス"] == target_cls]
@@ -411,7 +423,7 @@ with tab8:
     with col_out1:
         st.markdown("### 1. 対象書類と生徒の選択")
         doc_kind = st.selectbox("出力書類種別", ["通知表（あゆみ）", "指導要録（様式2）", "個別の指導計画"])
-        selected_cls = st.selectbox("対象クラス", ["2年1組", "2年2組"], key="out_cls")
+        selected_cls = st.selectbox("対象クラス", get_all_classes(), key="out_cls")
         
         # 該当クラスの在籍生徒
         cls_active_students = get_active_students(selected_cls)
@@ -423,12 +435,10 @@ with tab8:
         st.markdown(f"### 📄 画面表示プレビュー ({doc_kind})")
         
         if print_student and print_student != "なし":
-            # 生徒データの抽出
             st_info = st.session_state.student_master[st.session_state.student_master["氏名"] == print_student].iloc[0].to_dict()
             score_match = st.session_state.subject_scores[st.session_state.subject_scores["氏名"] == print_student]
             st_score = score_match.iloc[0].to_dict() if not score_match.empty else {}
             
-            # プレビュー表示（通知表形式カード）
             st.markdown(f"""
             <div class="student-card">
                 <h3>【{st.session_state.school_year}年度 {doc_kind}】</h3>
@@ -450,7 +460,6 @@ with tab8:
             </div>
             """, unsafe_allow_html=True)
             
-            # Wordファイル個別出力ボタン
             if st.button("📄 この生徒のWord通知表を生成・ダウンロード", type="primary"):
                 doc_data = {
                     "年度": st.session_state.school_year,
