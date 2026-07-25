@@ -11,15 +11,14 @@ from docx import Document
 # 1. ページ設定 & カスタムCSS
 # ==========================================
 st.set_page_config(
-    page_title="ツナグ先生 - 統合校務支援システム (V9.4大容量データ版)",
+    page_title="ツナグ先生 - 統合校務支援システム (V9.5堅牢化版)",
     page_icon="🏫",
     layout="wide"
 )
 
-# 💡 上部余白調整とグループ見出しの文字欠け防止CSS
+# 上部余白調整とグループ見出しの文字欠け防止CSS
 st.markdown("""
     <style>
-    /* 上部余白を適正値に調整（見切れるのを防止） */
     .block-container {
         padding-top: 2.5rem !important;
         padding-bottom: 1rem !important;
@@ -33,7 +32,6 @@ st.markdown("""
         margin-bottom: 15px; 
     }
 
-    /* グループ見出しのスタイル（line-heightとpaddingで高さ・文字表示を最適化） */
     .menu-group-header {
         font-size: 0.95rem;
         font-weight: bold;
@@ -55,13 +53,11 @@ st.markdown("""
         border-left: 4px solid #1f77b4;
     }
 
-    /* 1段目：学級担任用ボタンの色付け（オレンジ系） */
     div[data-testid="stSegmentedControl"]:nth-of-type(1) button[aria-selected="true"] {
         background-color: #e67e22 !important;
         color: white !important;
     }
 
-    /* 2段目：教科担当用ボタンの色付け（ブルー系） */
     div[data-testid="stSegmentedControl"]:nth-of-type(2) button[aria-selected="true"] {
         background-color: #1f77b4 !important;
         color: white !important;
@@ -192,9 +188,8 @@ except Exception:
 
 # --- サイドバーエリア ---
 with st.sidebar:
-    # 💡 パターン1：タイトルを左側ペインに移動
     st.title("🏫 ツナグ先生")
-    st.caption(f"統合校務支援システム (V9.4 / {st.session_state.school_year}年度)")
+    st.caption(f"統合校務支援システム (V9.5 / {st.session_state.school_year}年度)")
     st.markdown("---")
 
     st.header("⚙️ システム・基本情報")
@@ -210,27 +205,68 @@ with st.sidebar:
     else:
         st.success("🔑 API連携中")
     if api_key:
-        genai.configure(api_key=api_key)
+        try:
+            genai.configure(api_key=api_key)
+        except Exception as e:
+            st.error(f"APIキー設定エラー: {e}")
         
     doc_type = st.radio("文末モード:", ["です・ます調（通知表）", "である・した調（要録）"])
     ending_rule = "文末は「です・ます」調で統一。" if "です" in doc_type else "文末は「である・した」調で統一。"
+    
+    # 💡 提案3-3: 所見の目標文字数設定スライダー
+    max_char_limit = st.slider("所見の文字数目安（AI生成）:", min_value=50, max_value=300, value=150, step=10)
 
-# Helper Functions
+
+# ==========================================
+# 🛡️ 改善提案3: 堅牢な Word（.docx）置換ヘルパー関数
+# ==========================================
 def replace_docx_tags(doc, data_dict):
-    for p in doc.paragraphs:
-        for key, value in data_dict.items():
-            tag = f"{{{{{key}}}}}"
-            if tag in p.text:
-                p.text = p.text.replace(tag, str(value))
-    for table in doc.tables:
+    """
+    段落・表・セルのネスト構造を網羅し、安心安全にWordプレースホルダー{{tag}}を置換する関数
+    """
+    def replace_in_paragraphs(paragraphs):
+        for p in paragraphs:
+            for key, value in data_dict.items():
+                tag = f"{{{{{key}}}}}"
+                if tag in p.text:
+                    p.text = p.text.replace(tag, str(value) if value is not None else "")
+
+    def replace_in_table(table):
         for row in table.rows:
             for cell in row.cells:
-                for p in cell.paragraphs:
-                    for key, value in data_dict.items():
-                        tag = f"{{{{{key}}}}}"
-                        if tag in p.text:
-                            p.text = p.text.replace(tag, str(value))
+                replace_in_paragraphs(cell.paragraphs)
+                for nested_table in cell.tables:
+                    replace_in_table(nested_table)
+
+    # 1. 本文段落
+    replace_in_paragraphs(doc.paragraphs)
+    
+    # 2. 本文内の表
+    for table in doc.tables:
+        replace_in_table(table)
+        
+    # 3. ヘッダー・フッター
+    for section in doc.sections:
+        replace_in_paragraphs(section.header.paragraphs)
+        replace_in_paragraphs(section.footer.paragraphs)
+        for table in section.header.tables:
+            replace_in_table(table)
+        for table in section.footer.tables:
+            replace_in_table(table)
+
     return doc
+
+
+# 安全なAIリクエスト生成ヘルパー（エラーハンドリング付き）
+def safe_generate_content(prompt_text):
+    if not api_key:
+        return "⚠️ Gemini API Keyが設定されていません。サイドバーから設定してください。"
+    try:
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        res = model.generate_content(prompt_text)
+        return res.text.strip()
+    except Exception as e:
+        return f"❌ AI生成中にエラーが発生しました: {str(e)}"
 
 def get_all_classes():
     classes = sorted(st.session_state.student_master["クラス"].dropna().unique().tolist())
@@ -248,7 +284,6 @@ def get_active_students(cls_name=None):
 # 4. メイン画面（担任/教科 視覚的グループ分けメニュー）
 # ==========================================
 
-# 💡 学級担任用・教科担当用でメニューオプションを分割
 homeroom_options = [
     "📝 ① 日々メモ蓄積 & 所見",
     "📁 ② CSV一括生成",
@@ -264,7 +299,6 @@ subject_options = [
     "⚙️ ⓪ 担任＆授業担当 名簿管理"
 ]
 
-# メニュー選択の同期処理
 def sync_menu_homeroom():
     st.session_state.active_menu = st.session_state.hr_menu
 
@@ -298,11 +332,11 @@ st.divider()
 selected_menu = st.session_state.active_menu
 
 # ------------------------------------------
-# 機能0: ⓪ 担任＆授業担当 名簿管理
+# 機能0: ⓪ 担任＆授業担当 名簿管理（💡 Excel/CSV インポート機能統合）
 # ------------------------------------------
 if selected_menu == "⚙️ ⓪ 担任＆授業担当 名簿管理":
     st.subheader("⚙️ 全5クラス（200名）マスター名簿管理")
-    m_tab1, m_tab2 = st.tabs(["🏫 担任＆全担当クラス名簿・新規追加", "📚 授業担当クラス名簿（コピペ・CSV出力）"])
+    m_tab1, m_tab2, m_tab3 = st.tabs(["🏫 担任＆全担当クラス名簿・手動編集", "📥 Excel/CSV ファイルから一括取り込み", "📚 授業担当クラス名簿（コピペ・CSV出力）"])
     
     with m_tab1:
         col_m1, col_m2 = st.columns([1.3, 1])
@@ -330,9 +364,9 @@ if selected_menu == "⚙️ ⓪ 担任＆授業担当 名簿管理":
                     in_name = st.text_input("生徒氏名")
                     in_gender = st.selectbox("性別", ["男", "女"])
                     in_date = st.date_input("登録日")
-                    if st.form_submit_button("➕ 生徒を登録する") and in_name and target_cls:
+                    if st.form_submit_button("➕ 生徒を登録する") and in_name.strip() and target_cls:
                         new_st = pd.DataFrame([{"クラス": target_cls, "出席番号": in_num, "氏名": in_name, "性別": in_gender, "ステータス": "在籍", "異動日": str(in_date), "備考": "転入"}])
-                        st.session_state.student_master = pd.concat([st.session_state.student_master, new_st], ignore_index=True)
+                        st.session_state.student_master = pd.concat([st.session_state.student_state if "student_state" in st.session_state else st.session_state.student_master, new_st], ignore_index=True)
                         st.success(f"{target_cls} に {in_name} さんを登録しました！")
                         st.rerun()
 
@@ -350,7 +384,39 @@ if selected_menu == "⚙️ ⓪ 担任＆授業担当 名簿管理":
                         st.warning(f"{out_name} さんの転出処理を完了しました。")
                         st.rerun()
 
+    # 💡 提案3-1: 既存Excel/CSVインポート機能
     with m_tab2:
+        st.markdown("### 📥 既存の名簿ファイル（.xlsx / .csv）を一括取り込み")
+        st.caption("「クラス」「出席番号」「氏名」「性別」の列が含まれるファイルをアップロードしてください。")
+        uploaded_file = st.file_uploader("名簿ファイルをアップロード:", type=["csv", "xlsx"])
+        
+        if uploaded_file is not None:
+            try:
+                if uploaded_file.name.endswith(".csv"):
+                    imp_df = pd.read_csv(uploaded_file)
+                else:
+                    imp_df = pd.read_excel(uploaded_file)
+                
+                st.write("📖 **読み込んだプレビューデータ:**")
+                st.dataframe(imp_df.head(), use_container_width=True)
+                
+                req_cols = ["クラス", "出席番号", "氏名"]
+                if all(col in imp_df.columns for col in req_cols):
+                    if "性別" not in imp_df.columns: imp_df["性別"] = "未設定"
+                    if "ステータス" not in imp_df.columns: imp_df["ステータス"] = "在籍"
+                    if "異動日" not in imp_df.columns: imp_df["異動日"] = ""
+                    if "備考" not in imp_df.columns: imp_df["備考"] = "ファイル取込"
+                    
+                    if st.button("🚀 この名簿データをシステムに取り込む"):
+                        st.session_state.student_master = imp_df[st.session_state.student_master.columns]
+                        st.success("🎉 名簿データベースの更新が完了しました！")
+                        st.rerun()
+                else:
+                    st.error(f"必須列（{', '.join(req_cols)}）が見つかりません。ファイルフォーマットを確認してください。")
+            except Exception as e:
+                st.error(f"ファイル読み込みエラー: {e}")
+
+    with m_tab3:
         st.markdown("### 📚 担当5クラスの個別名簿抽出")
         all_classes = get_all_classes()
         selected_teach_cls = st.multiselect("抽出対象クラス選択:", all_classes, default=all_classes)
@@ -394,15 +460,15 @@ elif selected_menu == "📝 ① 日々メモ蓄積 & 所見":
         st.dataframe(student_memos[["日付", "対象分野", "観察メモ"]], use_container_width=True, height=200)
         
         if st.button("🪄 蓄積メモから所見文案を合成生成", type="primary"):
-            if api_key and not student_memos.empty:
+            if not student_memos.empty:
                 combined_memos = "\n".join(student_memos["観察メモ"].tolist())
-                prompt = f"生徒『{selected_student}』の蓄積メモ:\n{combined_memos}\n\n上記メモをもとに通知表用の所見文案を作成してください。{ending_rule}"
-                model = genai.GenerativeModel("gemini-2.5-flash")
+                prompt = f"生徒『{selected_student}』の蓄積メモ:\n{combined_memos}\n\n上記メモをもとに通知表用の所見文案を作成してください。文字数は約{max_char_limit}文字程度。{ending_rule}"
+                
                 with st.spinner("AIが所見文案を作成中..."):
-                    res = model.generate_content(prompt)
-                    st.text_area("生成された所見文案:", value=res.text.strip(), height=150)
-            elif not api_key:
-                st.warning("サイドバーでGemini API Keyを入力すると生成が試せます。")
+                    generated_text = safe_generate_content(prompt)
+                    st.text_area("生成された所見文案:", value=generated_text, height=150)
+            else:
+                st.warning("この生徒の観察メモがまだ登録されていません。")
 
 # ------------------------------------------
 # 機能2: ② CSV一括生成
@@ -415,21 +481,17 @@ elif selected_menu == "📁 ② CSV一括生成":
         cls_memos = st.session_state.daily_logs[st.session_state.daily_logs["クラス"] == target_cls]
         results = []
         
-        if api_key:
-            model = genai.GenerativeModel("gemini-2.5-flash")
-            progress_bar = st.progress(0)
-            unique_names = cls_memos["氏名"].unique()
+        progress_bar = st.progress(0)
+        unique_names = cls_memos["氏名"].unique()
+        
+        for i, name in enumerate(unique_names):
+            group = cls_memos[cls_memos["氏名"] == name]
+            all_memos = " / ".join(group["観察メモ"].tolist())
+            prompt = f"生徒:{name} メモ:{all_memos} の通知表所見を作成。文字数は約{max_char_limit}文字。{ending_rule}"
             
-            for i, name in enumerate(unique_names):
-                group = cls_memos[cls_memos["氏名"] == name]
-                all_memos = " / ".join(group["観察メモ"].tolist())
-                res = model.generate_content(f"生徒:{name} メモ:{all_memos} の通知表所見を作成。{ending_rule}")
-                results.append({"氏名": name, "まとめメモ": all_memos, "生成所見": res.text.strip()})
-                progress_bar.progress((i + 1) / len(unique_names))
-        else:
-            for name, group in cls_memos.groupby("氏名"):
-                all_memos = " / ".join(group["観察メモ"].tolist())
-                results.append({"氏名": name, "まとめメモ": all_memos, "生成所見": "（APIキーを入力するとここにAI一括生成文が入ります）"})
+            gen_text = safe_generate_content(prompt)
+            results.append({"氏名": name, "まとめメモ": all_memos, "生成所見": gen_text})
+            progress_bar.progress((i + 1) / len(unique_names))
                 
         res_df = pd.DataFrame(results)
         st.dataframe(res_df, use_container_width=True, height=300)
@@ -448,13 +510,11 @@ elif selected_menu == "🔍 ③ 所見データ自動校正":
     sample_text = st.text_area("校正対象テキスト:", value=f"{student_for_check}さんは、" + memos_text, height=120)
         
     if st.button("🛡️ AI誤字脱字・表現校正を実行", type="primary"):
-        if api_key and sample_text:
-            model = genai.GenerativeModel("gemini-2.5-flash")
-            res = model.generate_content(f"誤字脱字チェックおよび保護者目線での適切な文章校正を行ってください:\n{sample_text}\n{ending_rule}")
+        if sample_text:
+            prompt = f"誤字脱字チェックおよび保護者目線での適切な文章校正を行ってください:\n{sample_text}\n{ending_rule}"
+            res_text = safe_generate_content(prompt)
             st.markdown("### 💡 校正結果アドバイス:")
-            st.info(res.text)
-        elif not api_key:
-            st.warning("サイドバーでGemini API Keyを設定してください。")
+            st.info(res_text)
 
 # ------------------------------------------
 # 機能4: ④ 面談用自動連携カルテ
@@ -475,16 +535,13 @@ elif selected_menu == "💬 ④ 蓄積連動カルテ":
         st.dataframe(st_scores[["中間テスト", "期末テスト", "観点1_知識", "観点2_思考", "観点3_主体性", "評定"]], use_container_width=True)
         
     if st.button("📋 面談用トークポイントカルテをAI生成", type="primary"):
-        if api_key:
-            model = genai.GenerativeModel("gemini-2.5-flash")
-            memo_concat = " ".join(st_memos['観察メモ'].tolist())
-            score_info = st_scores.to_dict(orient="records")[0] if not st_scores.empty else {}
-            prompt = f"生徒『{kart_student}』の観察記録:{memo_concat}\nテスト成績:中間{score_info.get('中間テスト')}点, 期末{score_info.get('期末テスト')}点, 評定{score_info.get('評定')}\n面談で保護者に伝える【1.学習面・生活面の成長点 2.今後の課題 3.家庭での連携アドバイス】を簡潔に作成してください。"
-            res = model.generate_content(prompt)
-            st.info("💡 **AI生成 面談用カルテシート:**")
-            st.markdown(res.text)
-        else:
-            st.warning("サイドバーでGemini API Keyを設定してください。")
+        memo_concat = " ".join(st_memos['観察メモ'].tolist())
+        score_info = st_scores.to_dict(orient="records")[0] if not st_scores.empty else {}
+        prompt = f"生徒『{kart_student}』の観察記録:{memo_concat}\nテスト成績:中間{score_info.get('中間テスト')}点, 期末{score_info.get('期末テスト')}点, 評定{score_info.get('評定')}\n面談で保護者に伝える【1.学習面・生活面の成長点 2.今後の課題 3.家庭での連携アドバイス】を簡潔に作成してください。"
+        
+        res_text = safe_generate_content(prompt)
+        st.info("💡 **AI生成 面談用カルテシート:**")
+        st.markdown(res_text)
 
 # ------------------------------------------
 # 機能5: ⑤ 全5クラス成績 & 評定自動計算
@@ -615,24 +672,27 @@ elif selected_menu == "🖨️ ⑧ 通知表・要録 印刷＆出力":
                     "総合所見": st_score.get('総合所見', '')
                 }
                 
-                if template_word:
-                    doc = Document(template_word)
-                else:
-                    doc = Document()
-                    doc.add_heading(f"通知表 - {print_student} 様", 0)
-                    doc.add_paragraph(f"年度: {st.session_state.school_year}年度 | 担任: {st.session_state.teacher_name}")
-                    doc.add_paragraph(f"クラス: {st_info.get('クラス')}  出席番号: {st_info.get('出席番号')}")
-                    doc.add_paragraph(f"中間テスト: {st_score.get('中間テスト', '')}点 | 期末テスト: {st_score.get('期末テスト', '')}点")
-                    doc.add_paragraph(f"数学評定: {st_score.get('評定', '')}")
-                    doc.add_paragraph(f"総合所見:\n{st_score.get('総合所見', '')}")
-                
-                filled_doc = replace_docx_tags(doc, doc_data)
-                out_buffer = io.BytesIO()
-                filled_doc.save(out_buffer)
-                
-                st.download_button(
-                    label=f"📥 {print_student} さんの Wordファイルを保存",
-                    data=out_buffer.getvalue(),
-                    file_name=f"通知表_{print_student}.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                )
+                try:
+                    if template_word:
+                        doc = Document(template_word)
+                    else:
+                        doc = Document()
+                        doc.add_heading(f"通知表 - {print_student} 様", 0)
+                        doc.add_paragraph(f"年度: {st.session_state.school_year}年度 | 担任: {st.session_state.teacher_name}")
+                        doc.add_paragraph(f"クラス: {st_info.get('クラス')}  出席番号: {st_info.get('出席番号')}")
+                        doc.add_paragraph(f"中間テスト: {st_score.get('中間テスト', '')}点 | 期末テスト: {st_score.get('期末テスト', '')}点")
+                        doc.add_paragraph(f"数学評定: {st_score.get('評定', '')}")
+                        doc.add_paragraph(f"総合所見:\n{st_score.get('総合所見', '')}")
+                    
+                    filled_doc = replace_docx_tags(doc, doc_data)
+                    out_buffer = io.BytesIO()
+                    filled_doc.save(out_buffer)
+                    
+                    st.download_button(
+                        label=f"📥 {print_student} さんの Wordファイルを保存",
+                        data=out_buffer.getvalue(),
+                        file_name=f"通知表_{print_student}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                except Exception as e:
+                    st.error(f"Wordファイルの生成中にエラーが発生しました: {e}")
