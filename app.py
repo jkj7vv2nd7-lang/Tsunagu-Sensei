@@ -8,19 +8,19 @@ import random
 from docx import Document
 
 # ==========================================
-# 1. ページ設定 & カスタムCSS
+# 1. ページ設定 & カスタムCSS（タイトル見切れ修正）
 # ==========================================
 st.set_page_config(
-    page_title="ツナグ先生 - 統合校務支援システム (V9.5堅牢化版)",
+    page_title="ツナグ先生 - 統合校務支援システム (V10.1 UI＆カッティングポイント改善版)",
     page_icon="🏫",
     layout="wide"
 )
 
-# 上部余白調整とグループ見出しの文字欠け防止CSS
+# 💡 タイトル文字見切れ防止のため padding-top を 3.5rem に拡大
 st.markdown("""
     <style>
     .block-container {
-        padding-top: 2.5rem !important;
+        padding-top: 3.5rem !important;
         padding-bottom: 1rem !important;
     }
     
@@ -32,41 +32,21 @@ st.markdown("""
         margin-bottom: 15px; 
     }
 
-    .menu-group-header {
-        font-size: 0.95rem;
+    .sidebar-section-title {
+        font-size: 0.9rem;
         font-weight: bold;
-        line-height: 1.5 !important;
-        margin-top: 8px;
-        margin-bottom: 6px;
-        padding: 6px 10px;
+        color: #495057;
+        margin-top: 10px;
+        margin-bottom: 4px;
+        padding: 2px 6px;
+        background-color: #e9ecef;
         border-radius: 4px;
-        display: block;
-    }
-    .homeroom-header {
-        color: #d9534f;
-        background-color: #fdf2f2;
-        border-left: 4px solid #d9534f;
-    }
-    .subject-header {
-        color: #1f77b4;
-        background-color: #f0f7fc;
-        border-left: 4px solid #1f77b4;
-    }
-
-    div[data-testid="stSegmentedControl"]:nth-of-type(1) button[aria-selected="true"] {
-        background-color: #e67e22 !important;
-        color: white !important;
-    }
-
-    div[data-testid="stSegmentedControl"]:nth-of-type(2) button[aria-selected="true"] {
-        background-color: #1f77b4 !important;
-        color: white !important;
     }
     </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. 大容量ダミーデータ生成ロジック
+# 2. ダミーデータ生成ロジック
 # ==========================================
 
 @st.cache_data
@@ -106,11 +86,19 @@ def generate_full_dummy_data():
                 "備考": "担任クラス" if cls_name == "1年1組" else "授業担当"
             })
 
-            mid_score = random.randint(45, 98)
+            is_absent = (num == 13 or num == 27)
+            mid_score = None if is_absent else random.randint(45, 98)
             final_score = random.randint(50, 100)
+            estimated_score = 65 if is_absent else None
+            
             k1 = random.randint(55, 98)
             k2 = random.randint(50, 95)
             k3 = random.randint(60, 100)
+            
+            eval_1 = "A" if k1 >= 80 else ("B" if k1 >= 50 else "C")
+            eval_2 = "A" if k2 >= 80 else ("B" if k2 >= 50 else "C")
+            eval_3 = "A" if k3 >= 80 else ("B" if k3 >= 50 else "C")
+
             avg = (k1 + k2 + k3) / 3
             grade = 5 if avg >= 85 else (4 if avg >= 70 else (3 if avg >= 55 else (2 if avg >= 40 else 1)))
 
@@ -120,10 +108,17 @@ def generate_full_dummy_data():
                 "氏名": full_name,
                 "中間テスト": mid_score,
                 "期末テスト": final_score,
-                "観点1_知識": k1,
-                "観点2_思考": k2,
-                "観点3_主体性": k3,
-                "評定": grade,
+                "見込み点": estimated_score,
+                "観点1_知識(点)": k1,
+                "観点1_評価": eval_1,
+                "観点2_思考(点)": k2,
+                "観点2_評価": eval_2,
+                "観点3_主体性(点)": k3,
+                "観点3_評価": eval_3,
+                "自動評定": grade,
+                "★確定評定": grade,  # 人間調整後の評定
+                "調整フラグ": "―",
+                "調整理由": "",
                 "総合所見": f"{'課題に対して粘り強く思考し、工夫して解決策を導くことができました。' if grade >= 4 else '基礎的な計算力の定着が見られ、授業中の挙手・発言も意欲的です。'}"
             })
 
@@ -158,15 +153,13 @@ def generate_full_dummy_data():
 
 
 # ==========================================
-# 3. データベース（セッション状態）の初期化
+# 3. セッション状態の初期化
 # ==========================================
 
 if "school_year" not in st.session_state:
     st.session_state.school_year = "2026"
 if "teacher_name" not in st.session_state:
     st.session_state.teacher_name = "山田 太郎"
-if "active_menu" not in st.session_state:
-    st.session_state.active_menu = "📝 ① 日々メモ蓄積 & 所見"
 
 df_master, df_scores, df_logs = generate_full_dummy_data()
 
@@ -186,19 +179,39 @@ try:
 except Exception:
     pass
 
-# --- サイドバーエリア ---
+# サイドバー全メニュー統合
+menu_options = [
+    "--- 🏠 学級担任機能 ---",
+    "📝 ① 日々メモ蓄積 & 所見",
+    "📁 ② CSV一括生成",
+    "🔍 ③ 所見データ自動校正",
+    "💬 ④ 蓄積連動カルテ",
+    "🔄 ⑦ 担任用 全教科成績集約",
+    "🖨️ ⑧ 通知表・要録 印刷＆出力",
+    "--- 📚 教科担当機能 ---",
+    "📊 ⑤ 成績・観点A/B/C算出＆人間調整",
+    "📈 ⑥ 学期推移ダッシュボード",
+    "⚙️ ⓪ 担任＆授業担当 名簿管理"
+]
+
+if "selected_menu" not in st.session_state:
+    st.session_state.selected_menu = "📝 ① 日々メモ蓄積 & 所見"
+
 with st.sidebar:
     st.title("🏫 ツナグ先生")
-    st.caption(f"統合校務支援システム (V9.5 / {st.session_state.school_year}年度)")
+    st.caption(f"統合校務支援システム (V10.1 / {st.session_state.school_year}年度)")
     st.markdown("---")
 
-    st.header("⚙️ システム・基本情報")
+    st.markdown("**📌 機能メニュー選択**")
+    nav_selection = st.radio("機能選択", options=menu_options, index=1, label_visibility="collapsed")
+    
+    if not nav_selection.startswith("---"):
+        st.session_state.selected_menu = nav_selection
+
+    st.markdown("---")
+    st.markdown("**⚙️ システム基本設定**")
     st.session_state.school_year = st.text_input("年度設定", st.session_state.school_year)
     st.session_state.teacher_name = st.text_input("担任教員名", st.session_state.teacher_name)
-    
-    st.markdown("---")
-    st.info("🏫 **担任:** 1年1組 (40名)\n📚 **担当:** 1-1, 1-5, 2-2, 3-3, 3-5 (計200名)")
-    st.markdown("---")
     
     if not api_key:
         api_key = st.text_input("Gemini API Key", type="password")
@@ -212,18 +225,11 @@ with st.sidebar:
         
     doc_type = st.radio("文末モード:", ["です・ます調（通知表）", "である・した調（要録）"])
     ending_rule = "文末は「です・ます」調で統一。" if "です" in doc_type else "文末は「である・した」調で統一。"
-    
-    # 💡 提案3-3: 所見の目標文字数設定スライダー
     max_char_limit = st.slider("所見の文字数目安（AI生成）:", min_value=50, max_value=300, value=150, step=10)
 
 
-# ==========================================
-# 🛡️ 改善提案3: 堅牢な Word（.docx）置換ヘルパー関数
-# ==========================================
+# ヘルパー関数
 def replace_docx_tags(doc, data_dict):
-    """
-    段落・表・セルのネスト構造を網羅し、安心安全にWordプレースホルダー{{tag}}を置換する関数
-    """
     def replace_in_paragraphs(paragraphs):
         for p in paragraphs:
             for key, value in data_dict.items():
@@ -238,14 +244,9 @@ def replace_docx_tags(doc, data_dict):
                 for nested_table in cell.tables:
                     replace_in_table(nested_table)
 
-    # 1. 本文段落
     replace_in_paragraphs(doc.paragraphs)
-    
-    # 2. 本文内の表
     for table in doc.tables:
         replace_in_table(table)
-        
-    # 3. ヘッダー・フッター
     for section in doc.sections:
         replace_in_paragraphs(section.header.paragraphs)
         replace_in_paragraphs(section.footer.paragraphs)
@@ -256,8 +257,6 @@ def replace_docx_tags(doc, data_dict):
 
     return doc
 
-
-# 安全なAIリクエスト生成ヘルパー（エラーハンドリング付き）
 def safe_generate_content(prompt_text):
     if not api_key:
         return "⚠️ Gemini API Keyが設定されていません。サイドバーから設定してください。"
@@ -280,59 +279,14 @@ def get_active_students(cls_name=None):
     return active_df["氏名"].tolist()
 
 
+selected_menu = st.session_state.selected_menu
+
 # ==========================================
-# 4. メイン画面（担任/教科 視覚的グループ分けメニュー）
+# メイン画面処理
 # ==========================================
-
-homeroom_options = [
-    "📝 ① 日々メモ蓄積 & 所見",
-    "📁 ② CSV一括生成",
-    "🔍 ③ 所見データ自動校正",
-    "💬 ④ 蓄積連動カルテ",
-    "🔄 ⑦ 担任用 全教科成績集約",
-    "🖨️ ⑧ 通知表・要録 印刷＆出力"
-]
-
-subject_options = [
-    "📊 ⑤ 成績＆評定自動計算",
-    "📈 ⑥ 学期推移ダッシュボード",
-    "⚙️ ⓪ 担任＆授業担当 名簿管理"
-]
-
-def sync_menu_homeroom():
-    st.session_state.active_menu = st.session_state.hr_menu
-
-def sync_menu_subject():
-    st.session_state.active_menu = st.session_state.sub_menu
-
-# --- 1段目：学級担任向け機能 ---
-st.markdown('<div class="menu-group-header homeroom-header">🏠 学級担任メイン機能</div>', unsafe_allow_html=True)
-st.segmented_control(
-    "学級担任機能",
-    options=homeroom_options,
-    default=st.session_state.active_menu if st.session_state.active_menu in homeroom_options else None,
-    key="hr_menu",
-    on_change=sync_menu_homeroom,
-    label_visibility="collapsed"
-)
-
-# --- 2段目：教科担当向け機能 ---
-st.markdown('<div class="menu-group-header subject-header">📚 教科担当メイン機能</div>', unsafe_allow_html=True)
-st.segmented_control(
-    "教科担当機能",
-    options=subject_options,
-    default=st.session_state.active_menu if st.session_state.active_menu in subject_options else None,
-    key="sub_menu",
-    on_change=sync_menu_subject,
-    label_visibility="collapsed"
-)
-
-st.divider()
-
-selected_menu = st.session_state.active_menu
 
 # ------------------------------------------
-# 機能0: ⓪ 担任＆授業担当 名簿管理（💡 Excel/CSV インポート機能統合）
+# 機能0: ⓪ 担任＆授業担当 名簿管理
 # ------------------------------------------
 if selected_menu == "⚙️ ⓪ 担任＆授業担当 名簿管理":
     st.subheader("⚙️ 全5クラス（200名）マスター名簿管理")
@@ -366,7 +320,7 @@ if selected_menu == "⚙️ ⓪ 担任＆授業担当 名簿管理":
                     in_date = st.date_input("登録日")
                     if st.form_submit_button("➕ 生徒を登録する") and in_name.strip() and target_cls:
                         new_st = pd.DataFrame([{"クラス": target_cls, "出席番号": in_num, "氏名": in_name, "性別": in_gender, "ステータス": "在籍", "異動日": str(in_date), "備考": "転入"}])
-                        st.session_state.student_master = pd.concat([st.session_state.student_state if "student_state" in st.session_state else st.session_state.student_master, new_st], ignore_index=True)
+                        st.session_state.student_master = pd.concat([st.session_state.student_master, new_st], ignore_index=True)
                         st.success(f"{target_cls} に {in_name} さんを登録しました！")
                         st.rerun()
 
@@ -384,37 +338,28 @@ if selected_menu == "⚙️ ⓪ 担任＆授業担当 名簿管理":
                         st.warning(f"{out_name} さんの転出処理を完了しました。")
                         st.rerun()
 
-    # 💡 提案3-1: 既存Excel/CSVインポート機能
     with m_tab2:
         st.markdown("### 📥 既存の名簿ファイル（.xlsx / .csv）を一括取り込み")
-        st.caption("「クラス」「出席番号」「氏名」「性別」の列が含まれるファイルをアップロードしてください。")
         uploaded_file = st.file_uploader("名簿ファイルをアップロード:", type=["csv", "xlsx"])
-        
         if uploaded_file is not None:
             try:
-                if uploaded_file.name.endswith(".csv"):
-                    imp_df = pd.read_csv(uploaded_file)
-                else:
-                    imp_df = pd.read_excel(uploaded_file)
-                
-                st.write("📖 **読み込んだプレビューデータ:**")
+                imp_df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith(".csv") else pd.read_excel(uploaded_file)
+                st.write("📖 **プレビュー:**")
                 st.dataframe(imp_df.head(), use_container_width=True)
-                
                 req_cols = ["クラス", "出席番号", "氏名"]
                 if all(col in imp_df.columns for col in req_cols):
                     if "性別" not in imp_df.columns: imp_df["性別"] = "未設定"
                     if "ステータス" not in imp_df.columns: imp_df["ステータス"] = "在籍"
                     if "異動日" not in imp_df.columns: imp_df["異動日"] = ""
                     if "備考" not in imp_df.columns: imp_df["備考"] = "ファイル取込"
-                    
                     if st.button("🚀 この名簿データをシステムに取り込む"):
                         st.session_state.student_master = imp_df[st.session_state.student_master.columns]
                         st.success("🎉 名簿データベースの更新が完了しました！")
                         st.rerun()
                 else:
-                    st.error(f"必須列（{', '.join(req_cols)}）が見つかりません。ファイルフォーマットを確認してください。")
+                    st.error("必須列（クラス, 出席番号, 氏名）が含まれていません。")
             except Exception as e:
-                st.error(f"ファイル読み込みエラー: {e}")
+                st.error(f"読み込みエラー: {e}")
 
     with m_tab3:
         st.markdown("### 📚 担当5クラスの個別名簿抽出")
@@ -426,8 +371,7 @@ if selected_menu == "⚙️ ⓪ 担任＆授業担当 名簿管理":
                 (st.session_state.student_master["ステータス"] == "在籍")
             ][["クラス", "出席番号", "氏名", "性別"]].sort_values(by=["クラス", "出席番号"])
             st.dataframe(sub_df, use_container_width=True, height=300)
-            tsv_text = sub_df.to_csv(sep='\t', index=False)
-            st.text_area("Excel貼り付け用タブ区切りテキスト (Ctrl+V用):", tsv_text, height=100)
+            st.text_area("Excel貼り付け用タブ区切りテキスト (Ctrl+V用):", sub_df.to_csv(sep='\t', index=False), height=100)
 
 # ------------------------------------------
 # 機能1: ① 日々メモ蓄積 & 所見
@@ -463,7 +407,6 @@ elif selected_menu == "📝 ① 日々メモ蓄積 & 所見":
             if not student_memos.empty:
                 combined_memos = "\n".join(student_memos["観察メモ"].tolist())
                 prompt = f"生徒『{selected_student}』の蓄積メモ:\n{combined_memos}\n\n上記メモをもとに通知表用の所見文案を作成してください。文字数は約{max_char_limit}文字程度。{ending_rule}"
-                
                 with st.spinner("AIが所見文案を作成中..."):
                     generated_text = safe_generate_content(prompt)
                     st.text_area("生成された所見文案:", value=generated_text, height=150)
@@ -480,7 +423,6 @@ elif selected_menu == "📁 ② CSV一括生成":
     if st.button("🚀 1年1組全員（40名分）の所見をAI一括生成"):
         cls_memos = st.session_state.daily_logs[st.session_state.daily_logs["クラス"] == target_cls]
         results = []
-        
         progress_bar = st.progress(0)
         unique_names = cls_memos["氏名"].unique()
         
@@ -488,7 +430,6 @@ elif selected_menu == "📁 ② CSV一括生成":
             group = cls_memos[cls_memos["氏名"] == name]
             all_memos = " / ".join(group["観察メモ"].tolist())
             prompt = f"生徒:{name} メモ:{all_memos} の通知表所見を作成。文字数は約{max_char_limit}文字。{ending_rule}"
-            
             gen_text = safe_generate_content(prompt)
             results.append({"氏名": name, "まとめメモ": all_memos, "生成所見": gen_text})
             progress_bar.progress((i + 1) / len(unique_names))
@@ -517,7 +458,7 @@ elif selected_menu == "🔍 ③ 所見データ自動校正":
             st.info(res_text)
 
 # ------------------------------------------
-# 機能4: ④ 面談用自動連携カルテ
+# 機能4: ④ 蓄積連動カルテ
 # ------------------------------------------
 elif selected_menu == "💬 ④ 蓄積連動カルテ":
     st.subheader("💬 保護者面談用カルテ（蓄積メモ＋テスト成績の自動連携）")
@@ -532,41 +473,124 @@ elif selected_menu == "💬 ④ 蓄積連動カルテ":
         st.dataframe(st_memos[["日付", "対象分野", "観察メモ"]], use_container_width=True, height=200)
     with col_k2:
         st.markdown("### 📊 自教科テスト＆観点成績")
-        st.dataframe(st_scores[["中間テスト", "期末テスト", "観点1_知識", "観点2_思考", "観点3_主体性", "評定"]], use_container_width=True)
+        st.dataframe(st_scores[["中間テスト", "期末テスト", "見込み点", "観点1_評価", "観点2_評価", "観点3_評価", "★確定評定"]], use_container_width=True)
         
     if st.button("📋 面談用トークポイントカルテをAI生成", type="primary"):
         memo_concat = " ".join(st_memos['観察メモ'].tolist())
         score_info = st_scores.to_dict(orient="records")[0] if not st_scores.empty else {}
-        prompt = f"生徒『{kart_student}』の観察記録:{memo_concat}\nテスト成績:中間{score_info.get('中間テスト')}点, 期末{score_info.get('期末テスト')}点, 評定{score_info.get('評定')}\n面談で保護者に伝える【1.学習面・生活面の成長点 2.今後の課題 3.家庭での連携アドバイス】を簡潔に作成してください。"
-        
+        prompt = f"生徒『{kart_student}』の観察記録:{memo_concat}\nテスト成績:中間{score_info.get('中間テスト')}点, 期末{score_info.get('期末テスト')}点, 最終評定{score_info.get('★確定評定')}\n面談で保護者に伝える【1.学習面・生活面の成長点 2.今後の課題 3.家庭での連携アドバイス】を簡潔に作成してください。"
         res_text = safe_generate_content(prompt)
         st.info("💡 **AI生成 面談用カルテシート:**")
         st.markdown(res_text)
 
 # ------------------------------------------
-# 機能5: ⑤ 全5クラス成績 & 評定自動計算
+# 💡 改善提案5: 成績・観点A/B/C算出 ＆ カッティングポイント設定 ＆ 人間調整
 # ------------------------------------------
-elif selected_menu == "📊 ⑤ 成績＆評定自動計算":
-    st.subheader("📊 全5クラス（200名）成績・テスト得点・評定入力")
-    sel_eval_cls = st.selectbox("表示クラス切替:", get_all_classes(), key="t5_cls")
+elif selected_menu == "📊 ⑤ 成績・観点A/B/C算出＆人間調整":
+    st.subheader("📊 成績・観点A/B/C評価算出 ＆ カッティングポイント設定 ＆ 人間調整ワークスペース")
     
-    cls_score_df = st.session_state.subject_scores[st.session_state.subject_scores["クラス"] == sel_eval_cls]
-    st.caption(f"※ {sel_eval_cls} の40名分のデータです。中間・期末テスト結果や観点を直接打ち替え可能です。")
+    sel_eval_cls = st.selectbox("対象クラス切替:", get_all_classes(), key="t5_cls")
+
+    # 💡 改善点1: カッティングポイント（しきい値）の教員自由設定エリア
+    with st.expander("⚙️ 【設定】観点別評価（A/B/C）のカッティングポイント（しきい値）設定", expanded=False):
+        st.caption("各観点の点数（100点満点換算）をどのラインでA・B・C評価に自動換算するかを設定できます。")
+        col_cp1, col_cp2, col_cp3 = st.columns(3)
+        with col_cp1:
+            st.markdown("**観点1 (知識・技能)**")
+            cut_k1_a = st.number_input("A評価のボーダー (点以上)", value=80, key="cp_k1_a")
+            cut_k1_b = st.number_input("B評価のボーダー (点以上)", value=50, key="cp_k1_b")
+        with col_cp2:
+            st.markdown("**観点2 (思考・判断・表現)**")
+            cut_k2_a = st.number_input("A評価のボーダー (点以上)", value=80, key="cp_k2_a")
+            cut_k2_b = st.number_input("B評価のボーダー (点以上)", value=50, key="cp_k2_b")
+        with col_cp3:
+            st.markdown("**観点3 (主体的に学習に取り組む態度)**")
+            cut_k3_a = st.number_input("A評価のボーダー (点以上)", value=80, key="cp_k3_a")
+            cut_k3_b = st.number_input("B評価のボーダー (点以上)", value=50, key="cp_k3_b")
+
+    st.markdown("---")
+
+    cls_score_df = st.session_state.subject_scores[st.session_state.subject_scores["クラス"] == sel_eval_cls].copy()
+
+    st.markdown("### ✏️ 成績＆評価データ・人間微調整シート")
+    st.caption("💡 **調整方法:** 右側の「★確定評定」列を必要に応じて打ち替えてください。自動評定と異なる場合は「⚠️ 変更済」フラグが自動的に立ちます。")
+
+    # 表示する列の順番を人間が判断しやすいプロセス順に整列
+    columns_order = [
+        "出席番号", "氏名", "中間テスト", "期末テスト", "見込み点",
+        "観点1_知識(点)", "観点1_評価", 
+        "観点2_思考(点)", "観点2_評価", 
+        "観点3_主体性(点)", "観点3_評価", 
+        "自動評定", "★確定評定", "調整フラグ", "調整理由"
+    ]
     
-    edited_scores = st.data_editor(cls_score_df, num_rows="dynamic", use_container_width=True, height=350, key=f"score_editor_{sel_eval_cls}")
-    
-    if st.button("⚡ 観点平均から5段階評定を一括全自動再計算"):
-        def calc_grade(row):
-            avg = (row["観点1_知識"] + row["観点2_思考"] + row["観点3_主体性"]) / 3
-            if avg >= 85: return 5
-            elif avg >= 70: return 4
-            elif avg >= 55: return 3
-            elif avg >= 40: return 2
-            else: return 1
+    # 既存データフレームに必要な列が存在するか確認・補正
+    for col in columns_order:
+        if col not in cls_score_df.columns:
+            cls_score_df[col] = ""
+
+    display_df = cls_score_df[columns_order]
+
+    # データエディタで直接編集
+    edited_scores = st.data_editor(
+        display_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        height=400,
+        key=f"score_editor_{sel_eval_cls}"
+    )
+
+    col_btn1, col_btn2 = st.columns([1.2, 1])
+    with col_btn1:
+        if st.button("⚡ 設定したカッティングポイントで A/B/C & 自動評定を再計算"):
+            def recalculate_row(row):
+                # 設定されたカッティングポイントを適用
+                k1 = row["観点1_知識(点)"]
+                row["観点1_評価"] = "A" if k1 >= cut_k1_a else ("B" if k1 >= cut_k1_b else "C")
+                
+                k2 = row["観点2_思考(点)"]
+                row["観点2_評価"] = "A" if k2 >= cut_k2_a else ("B" if k2 >= cut_k2_b else "C")
+                
+                k3 = row["観点3_主体性(点)"]
+                row["観点3_評価"] = "A" if k3 >= cut_k3_a else ("B" if k3 >= cut_k3_b else "C")
+
+                # 平均点から自動評定を算出
+                avg = (k1 + k2 + k3) / 3
+                auto_g = 5 if avg >= 85 else (4 if avg >= 70 else (3 if avg >= 55 else (2 if avg >= 40 else 1)))
+                row["自動評定"] = auto_g
+
+                # ★確定評定が未入力の場合は自動評定をデフォルト設定
+                if pd.isna(row["★確定評定"]) or str(row["★確定評定"]).strip() == "":
+                    row["★確定評定"] = auto_g
+
+                # 人間による調整があるかの判定（調整フラグの更新）
+                if str(row["自動評定"]) != str(row["★確定評定"]):
+                    row["調整フラグ"] = "⚠️ 変更済"
+                else:
+                    row["調整フラグ"] = "―"
+                
+                return row
+
+            updated_df = edited_scores.apply(recalculate_row, axis=1)
             
-        st.session_state.subject_scores["評定"] = st.session_state.subject_scores.apply(calc_grade, axis=1)
-        st.success("🎉 全5クラス（200名分）の観点データから5段階評定を再計算しました！")
-        st.rerun()
+            # 元データフレームへ反映
+            st.session_state.subject_scores.update(updated_df)
+            st.success("🎉 指定したカッティングポイントに基づき、A/B/C評価と評定・調整フラグを最新化しました！")
+            st.rerun()
+
+    with col_btn2:
+        if st.button("💾 人間調整後の評定データをデータベースに確定保存"):
+            # 手動更新分の調整フラグを最新チェック
+            def check_flag(row):
+                if str(row["自動評定"]) != str(row["★確定評定"]):
+                    row["調整フラグ"] = "⚠️ 変更済"
+                else:
+                    row["調整フラグ"] = "―"
+                return row
+            
+            final_df = edited_scores.apply(check_flag, axis=1)
+            st.session_state.subject_scores.update(final_df)
+            st.success("✅ 人間調整後の確定評定データをデータベースに保存しました！")
 
 # ------------------------------------------
 # 機能6: ⑥ 学期推移ダッシュボード
@@ -583,7 +607,7 @@ elif selected_menu == "📈 ⑥ 学期推移ダッシュボード":
     
     st.markdown("### 📋 成績下降・フォロー対象者（期末テストで点数が下がった生徒）")
     down_students = cls_scores[cls_scores["期末テスト"] < cls_scores["中間テスト"]]
-    st.dataframe(down_students[["出席番号", "氏名", "中間テスト", "期末テスト", "評定"]], use_container_width=True)
+    st.dataframe(down_students[["出席番号", "氏名", "中間テスト", "期末テスト", "★確定評定", "調整フラグ"]], use_container_width=True)
 
 # ------------------------------------------
 # 機能7: ⑦ 担任用 全教科成績集約
@@ -598,7 +622,7 @@ elif selected_menu == "🔄 ⑦ 担任用 全教科成績集約":
         kokugo_df = pd.DataFrame([{"氏名": n, "国語_評定": random.randint(2, 5), "国語_観点_知識": random.randint(60, 95)} for n in c1_students])
         eigo_df = pd.DataFrame([{"氏名": n, "英語_評定": random.randint(2, 5), "英語_観点_知識": random.randint(55, 98)} for n in c1_students])
         
-        math_df = st.session_state.subject_scores[st.session_state.subject_scores["クラス"] == "1年1組"][["氏名", "評定"]].rename(columns={"評定": "数学_評定"})
+        math_df = st.session_state.subject_scores[st.session_state.subject_scores["クラス"] == "1年1組"][["氏名", "★確定評定"]].rename(columns={"★確定評定": "数学_評定"})
         
         merged_all = pd.merge(math_df, kokugo_df, on="氏名")
         merged_all = pd.merge(merged_all, eigo_df, on="氏名")
@@ -633,6 +657,13 @@ elif selected_menu == "🖨️ ⑧ 通知表・要録 印刷＆出力":
             score_match = st.session_state.subject_scores[st.session_state.subject_scores["氏名"] == print_student]
             st_score = score_match.iloc[0].to_dict() if not score_match.empty else {}
             
+            mid_display = str(st_score.get('中間テスト', '-'))
+            if pd.isna(st_score.get('中間テスト')) or st_score.get('中間テスト') is None:
+                if st_score.get('見込み点'):
+                    mid_display = f"未受検 (見込み点: {st_score.get('見込み点')}点)"
+                else:
+                    mid_display = "未受検"
+
             st.markdown(f"""
             <div class="student-card">
                 <h3>【{st.session_state.school_year}年度 1学期 通知表プレビュー】</h3>
@@ -642,11 +673,11 @@ elif selected_menu == "🖨️ ⑧ 通知表・要録 印刷＆出力":
                 <hr>
                 <h4>📊 自教科（数学）学習評価成績</h4>
                 <ul>
-                    <li>中間テスト: <strong>{st_score.get('中間テスト', '-')}</strong> 点 / 期末テスト: <strong>{st_score.get('期末テスト', '-')}</strong> 点</li>
-                    <li>観点1 (知識・技能): <strong>{st_score.get('観点1_知識', '-')}</strong> 点</li>
-                    <li>観点2 (思考・判断・表現): <strong>{st_score.get('観点2_思考', '-')}</strong> 点</li>
-                    <li>観点3 (主体的に取り組む態度): <strong>{st_score.get('観点3_主体性', '-')}</strong> 点</li>
-                    <li>学習評定（5段階）: <strong style="font-size:1.4em; color:#d9534f;">{st_score.get('評定', '-')}</strong></li>
+                    <li>中間テスト: <strong>{mid_display}</strong> / 期末テスト: <strong>{st_score.get('期末テスト', '-')}</strong> 点</li>
+                    <li>観点1 (知識・技能): <strong>{st_score.get('観点1_評価', '-')}</strong> ({st_score.get('観点1_知識(点)', '-')}点)</li>
+                    <li>観点2 (思考・判断・表現): <strong>{st_score.get('観点2_評価', '-')}</strong> ({st_score.get('観点2_思考(点)', '-')}点)</li>
+                    <li>観点3 (主体的に取り組む態度): <strong>{st_score.get('観点3_評価', '-')}</strong> ({st_score.get('観点3_主体性(点)', '-')}点)</li>
+                    <li>確定学習評定（5段階）: <strong style="font-size:1.4em; color:#d9534f;">{st_score.get('★確定評定', '-')}</strong> (自動算出: {st_score.get('自動評定', '-')}) {st_score.get('調整フラグ', '')}</li>
                 </ul>
                 <hr>
                 <h4>📝 総合所見（通知表文章）</h4>
@@ -663,12 +694,12 @@ elif selected_menu == "🖨️ ⑧ 通知表・要録 印刷＆出力":
                     "クラス": st_info.get('クラス'),
                     "出席番号": st_info.get('出席番号'),
                     "氏名": print_student,
-                    "中間": st_score.get('中間テスト', ''),
+                    "中間": mid_display,
                     "期末": st_score.get('期末テスト', ''),
-                    "観点1": st_score.get('観点1_知識', ''),
-                    "観点2": st_score.get('観点2_思考', ''),
-                    "観点3": st_score.get('観点3_主体性', ''),
-                    "評定": st_score.get('評定', ''),
+                    "観点1": st_score.get('観点1_評価', ''),
+                    "観点2": st_score.get('観点2_評価', ''),
+                    "観点3": st_score.get('観点3_評価', ''),
+                    "評定": st_score.get('★確定評定', ''),
                     "総合所見": st_score.get('総合所見', '')
                 }
                 
@@ -680,8 +711,8 @@ elif selected_menu == "🖨️ ⑧ 通知表・要録 印刷＆出力":
                         doc.add_heading(f"通知表 - {print_student} 様", 0)
                         doc.add_paragraph(f"年度: {st.session_state.school_year}年度 | 担任: {st.session_state.teacher_name}")
                         doc.add_paragraph(f"クラス: {st_info.get('クラス')}  出席番号: {st_info.get('出席番号')}")
-                        doc.add_paragraph(f"中間テスト: {st_score.get('中間テスト', '')}点 | 期末テスト: {st_score.get('期末テスト', '')}点")
-                        doc.add_paragraph(f"数学評定: {st_score.get('評定', '')}")
+                        doc.add_paragraph(f"中間テスト: {mid_display} | 期末テスト: {st_score.get('期末テスト', '')}点")
+                        doc.add_paragraph(f"数学評定: {st_score.get('★確定評定', '')}")
                         doc.add_paragraph(f"総合所見:\n{st_score.get('総合所見', '')}")
                     
                     filled_doc = replace_docx_tags(doc, doc_data)
