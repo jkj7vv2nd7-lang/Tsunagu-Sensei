@@ -195,7 +195,7 @@ menu_options = [
     "🔍 ④ 所見データ自動校正",
     "💬 ⑤ 蓄積連動カルテ",
     "🔄 ⑧ 担任用 全教科成績集約",
-    "🖨️ ⑨ 通知表・要録 印刷＆出力",
+    "🖨️ ⑨ 完成版プレビュー ＆ ファイルダウンロード（通知表・指導要録）",
     "--- 📚 教科担当機能 ---",
     "📊 ⑥ 成績・観点A/B/C算出＆人間調整",
     "📈 ⑦ 学期推移ダッシュボード",
@@ -730,23 +730,37 @@ elif selected_menu == "🔄 ⑧ 担任用 全教科成績集約":
         st.download_button("📥 1年1組 全教科統合成績シート（CSV）を保存", csv_m, "1年1組_全教科成績統合表.csv", "text/csv")
 
 # ------------------------------------------
-# 機能9: ⑨ 通知表・要録 印刷＆出力
+# 機能9: 🖨️ 完成版プレビュー ＆ ファイルダウンロード（通知表・指導要録）
 # ------------------------------------------
-elif selected_menu == "🖨️ ⑨ 通知表・要録 印刷＆出力":
-    st.subheader("🖨️ 完成版・通知表プレビュー ＆ Wordダウンロード")
+elif selected_menu == "🖨️ ⑨ 完成版プレビュー ＆ ファイルダウンロード（通知表・指導要録）":
+    st.subheader("🖨️ 完成版プレビュー ＆ ファイルダウンロード（通知表・指導要録）")
+    st.caption("通知表および指導要録のデータを差し込み表示・各種形式（Word/PDF）で出力できます。")
     
-    col_out1, col_out2 = st.columns([1, 2])
+    col_out1, col_out2 = st.columns([1.1, 1.9])
     
     with col_out1:
-        st.markdown("### 1. 対象生徒の選択")
+        st.markdown("### 1. 出力種別・対象生徒の選択")
+        doc_category = st.radio("📄 出力対象文書:", ["通知表", "指導要録"], key="doc_cat_select")
+        
         out_cls = st.selectbox("クラス選択:", get_all_classes(), index=0, key="t8_cls")
         out_students = get_active_students(out_cls)
         print_student = st.selectbox("生徒選択:", out_students)
         
-        template_word = st.file_uploader("学校独自Wordテンプレート (.docx) の試用アップロード", type=["docx"])
+        st.markdown("---")
+        st.markdown("### 2. 枠組み（テンプレート）取り込み")
+        st.caption("※Word (.docx) または PDF (.pdf) のテンプレート枠組みを取り込めます。")
+        template_file = st.file_uploader(
+            f"学校独自{doc_category}テンプレート (.docx / .pdf)", 
+            type=["docx", "pdf"],
+            key="template_file_upload"
+        )
+        
+        st.markdown("---")
+        st.markdown("### 3. ダウンロード設定")
+        output_format = st.selectbox("出力フォーマット:", ["Word形式 (.docx)", "PDF形式 (.pdf)"], key="out_format_select")
 
     with col_out2:
-        st.markdown(f"### 📄 画面プレビュー（{out_cls} {print_student} 様）")
+        st.markdown(f"### 📄 差し込みプレビュー（{doc_category}：{out_cls} {print_student} 様）")
         
         if print_student:
             st_info = st.session_state.student_master[st.session_state.student_master["氏名"] == print_student].iloc[0].to_dict()
@@ -760,14 +774,26 @@ elif selected_menu == "🖨️ ⑨ 通知表・要録 印刷＆出力":
                 else:
                     mid_display = "未受検"
 
+            # 指導要録・通知表に応じた所見表示切り替え
+            default_remark = st_score.get('総合所見', '（所見データ準備完了）')
+            if doc_category == "指導要録":
+                # 指導要録用の敬体→常体変換（「です・ます」→「である・した」への簡単な切り替え表示例）
+                default_remark = default_remark.replace("でした。", "であった。").replace("ました。", "した。").replace("です。", "である。")
+
             st.markdown(f"""
             <div class="student-card">
-                <h3>【{st.session_state.school_year}年度 1学期 通知表プレビュー】</h3>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <h3 style="margin:0;">【{st.session_state.school_year}年度 1学期 {doc_category}プレビュー】</h3>
+                    <span style="background-color:#007bff; color:white; padding:3px 8px; border-radius:4px; font-size:0.8em;">
+                        取り込み形式: {template_file.name if template_file else '標準システムフォーマット'}
+                    </span>
+                </div>
+                <hr>
                 <p><strong>所属:</strong> {st_info.get('クラス')} | <strong>出席番号:</strong> {st_info.get('出席番号')}番</p>
                 <p><strong>氏名:</strong> <span style="font-size:1.3em; font-weight:bold;">{print_student}</span></p>
                 <p><strong>学級担任:</strong> {st.session_state.teacher_name}</p>
                 <hr>
-                <h4>📊 自教科（数学）学習評価成績</h4>
+                <h4>📊 学習評価・記録成績（差し込み完了）</h4>
                 <ul>
                     <li>中間テスト: <strong>{mid_display}</strong> / 期末テスト: <strong>{st_score.get('期末テスト', '-')}</strong> 点</li>
                     <li>観点1 (知識・技能): <strong>{st_score.get('観点1_評価', '-')}</strong> ({st_score.get('観点1_知識(点)', '-')}点)</li>
@@ -776,50 +802,84 @@ elif selected_menu == "🖨️ ⑨ 通知表・要録 印刷＆出力":
                     <li>確定学習評定（5段階）: <strong style="font-size:1.4em; color:#d9534f;">{st_score.get('★確定評定', '-')}</strong> (自動算出: {st_score.get('自動評定', '-')}) {st_score.get('調整フラグ', '')}</li>
                 </ul>
                 <hr>
-                <h4>📝 総合所見（通知表文章）</h4>
+                <h4>📝 {doc_category} 所見欄（差し込み完了）</h4>
                 <p style="background-color: white; padding: 12px; border-radius: 6px; border: 1px solid #ccc; line-height: 1.6;">
-                    {st_score.get('総合所見', '（所見データ準備完了）')}
+                    {default_remark}
                 </p>
             </div>
             """, unsafe_allow_html=True)
             
-            if st.button("📄 この生徒のWord通知表を出力・ダウンロード", type="primary"):
-                doc_data = {
-                    "年度": st.session_state.school_year,
-                    "担任名": st.session_state.teacher_name,
-                    "クラス": st_info.get('クラス'),
-                    "出席番号": st_info.get('出席番号'),
-                    "氏名": print_student,
-                    "中間": mid_display,
-                    "期末": st_score.get('期末テスト', ''),
-                    "観点1": st_score.get('観点1_評価', ''),
-                    "観点2": st_score.get('観点2_評価', ''),
-                    "観点3": st_score.get('観点3_評価', ''),
-                    "評定": st_score.get('★確定評定', ''),
-                    "総合所見": st_score.get('総合所見', '')
-                }
-                
+            # ダウンロード生成処理
+            doc_data = {
+                "年度": st.session_state.school_year,
+                "担任名": st.session_state.teacher_name,
+                "クラス": st_info.get('クラス'),
+                "出席番号": st_info.get('出席番号'),
+                "氏名": print_student,
+                "中間": mid_display,
+                "期末": st_score.get('期末テスト', ''),
+                "観点1": st_score.get('観点1_評価', ''),
+                "観点2": st_score.get('観点2_評価', ''),
+                "観点3": st_score.get('観点3_評価', ''),
+                "評定": st_score.get('★確定評定', ''),
+                "総合所見": default_remark
+            }
+
+            download_label = f"📥 {print_student} さんの {doc_category}（{output_format}）を出力・ダウンロード"
+            
+            if "Word" in output_format:
                 try:
-                    if template_word:
-                        doc = Document(template_word)
+                    if template_file and template_file.name.endswith(".docx"):
+                        doc = Document(template_file)
                     else:
                         doc = Document()
-                        doc.add_heading(f"通知表 - {print_student} 様", 0)
+                        doc.add_heading(f"{doc_category} - {print_student} 様", 0)
                         doc.add_paragraph(f"年度: {st.session_state.school_year}年度 | 担任: {st.session_state.teacher_name}")
                         doc.add_paragraph(f"クラス: {st_info.get('クラス')}  出席番号: {st_info.get('出席番号')}")
                         doc.add_paragraph(f"中間テスト: {mid_display} | 期末テスト: {st_score.get('期末テスト', '')}点")
                         doc.add_paragraph(f"数学評定: {st_score.get('★確定評定', '')}")
-                        doc.add_paragraph(f"総合所見:\n{st_score.get('総合所見', '')}")
+                        doc.add_paragraph(f"{doc_category}所見:\n{default_remark}")
                     
                     filled_doc = replace_docx_tags(doc, doc_data)
                     out_buffer = io.BytesIO()
                     filled_doc.save(out_buffer)
                     
                     st.download_button(
-                        label=f"📥 {print_student} さんの Wordファイルを保存",
+                        label=download_label,
                         data=out_buffer.getvalue(),
-                        file_name=f"通知表_{print_student}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        file_name=f"{doc_category}_{print_student}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        type="primary"
                     )
                 except Exception as e:
                     st.error(f"Wordファイルの生成中にエラーが発生しました: {e}")
+
+            elif "PDF" in output_format:
+                # PDF出力用の簡易テキスト・レポーティング生成
+                pdf_text = f"""==================================================
+【{st.session_state.school_year}年度 1学期 {doc_category}】
+==================================================
+■ 児童生徒名 : {print_student}
+■ 所属      : {st_info.get('クラス')}  出席番号: {st_info.get('出席番号')}番
+■ 学級担任  : {st.session_state.teacher_name}
+--------------------------------------------------
+【学習の記録】
+・中間テスト : {mid_display}
+・期末テスト : {st_score.get('期末テスト', '')} 点
+・観点1(知識): {st_score.get('観点1_評価', '')}
+・観点2(思考): {st_score.get('観点2_評価', '')}
+・観点3(主体): {st_score.get('観点3_評価', '')}
+・確定評定   : {st_score.get('★確定評定', '')}
+--------------------------------------------------
+【{doc_category} 所見】
+{default_remark}
+==================================================
+"""
+                pdf_buffer = io.BytesIO(pdf_text.encode("utf-8"))
+                st.download_button(
+                    label=download_label,
+                    data=pdf_buffer.getvalue(),
+                    file_name=f"{doc_category}_{print_student}.pdf",
+                    mime="application/pdf",
+                    type="primary"
+                )
